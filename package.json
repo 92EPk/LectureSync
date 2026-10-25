@@ -1,0 +1,106 @@
+{
+  "name": "lecturesync",
+  "productName": "LectureSync",
+  "version": "1.0.0",
+  "description": "Zero-bandwidth desktop orchestrator that moves lecture archives from Telegram to Google Drive via ephemeral Colab compute.",
+  "author": "Ahmed Omran <B9x@outlook.com>",
+  "homepage": "https://github.com/92EPK/LectureSync",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win nsis portable --x64",
+    "build:linux": "electron-builder --linux AppImage deb --x64",
+    "build:mac": "electron-builder --mac dmg zip --x64 --arm64"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.ahmedomran.lecturesync",
+    "copyright": "Copyright \u00a9 2026 Ahmed Omran",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "ui/**",
+      "worker/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "publisherName": "Ahmed Omran"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "LectureSync-Portable-${version}-${arch}.exe"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "maintainer": "Ahmed Omran <B9x@outlook.com>",
+      "synopsis": "Telegram lectures to Google Drive via Colab"
+    },
+    "appImage": {
+      "artifactName": "LectureSync-${version}-${arch}.AppImage"
+    },
+    "deb": {
+      "artifactName": "LectureSync_${version}_${arch}.deb"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon-mac.png",
+      "category": "public.app-category.education",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "artifactName": "LectureSync-${version}-${arch}.dmg",
+      "title": "LectureSync ${version}"
+    },
+    "publish": null
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/92EPK/LectureSync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/92EPK/LectureSync/issues"
+  }
+}

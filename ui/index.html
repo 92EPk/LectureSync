@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data:; style-src 'self' file: 'unsafe-inline'; script-src 'self' file:" />
+  <title>LectureSync</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/logo.png" alt="" />
+      <div>
+        <strong>LectureSync</strong>
+        <small>Telegram → Google Drive, through Colab</small>
+      </div>
+    </div>
+    <span id="status" class="pill">Not connected</span>
+    <div id="disk" class="disk hidden">
+      <span id="diskText"></span>
+      <div class="meter"><i id="diskFill"></i></div>
+    </div>
+    <nav>
+      <button id="showColab" class="ghost hidden" data-icon="colab">Colab window</button>
+      <button id="toggleTheme" class="ghost" title="Dark / light">Theme</button>
+      <button id="openSettings" class="ghost" data-icon="gear">Settings</button>
+      <button id="openAbout" class="ghost" data-icon="info">About</button>
+    </nav>
+  </header>
+
+  <!-- shown until the app is connected and signed in to Telegram -->
+  <section id="onboarding" class="onboarding">
+    <h1>Let's get you set up</h1>
+    <p class="lead">Three steps. You only do step 1 once; after that it's one click each time.</p>
+
+    <ol class="steps">
+      <li id="step1" class="step">
+        <span class="num">1</span>
+        <div class="body">
+          <h3>Your Telegram keys</h3>
+          <p>Every user uses their own Telegram account. Get your <b>API ID</b> and <b>API Hash</b> from Telegram's developer page (log in with your phone → <i>API development tools</i> → create any app).</p>
+          <div class="row">
+            <button id="getKeys" class="ghost" data-icon="link">Open my.telegram.org</button>
+            <button id="enterKeys" class="primary">Enter my keys</button>
+          </div>
+          <p id="step1Done" class="done hidden">Saved on this PC (encrypted).</p>
+        </div>
+      </li>
+
+      <li id="step2" class="step">
+        <span class="num">2</span>
+        <div class="body">
+          <h3>Start the Colab engine</h3>
+          <p>A Google Colab window opens inside the app. Sign in with your Google account if asked, then allow Drive access when Google asks. The app pastes and runs everything for you.</p>
+          <div class="row">
+            <button id="startColab" class="primary" data-icon="play">Start Colab engine</button>
+            <button id="startColabExternal" class="ghost">Google won't sign me in? Use my browser</button>
+          </div>
+          <p id="notebookText" class="muted"></p>
+          <p id="stageText" class="muted"></p>
+          <div id="manualHelp" class="callout hidden">
+            The code is already copied. In the Colab window: click the empty cell, press <kbd>Ctrl</kbd>+<kbd>V</kbd>, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.
+            <button id="copyAgain" class="ghost small">Copy again</button>
+          </div>
+          <div id="externalHelp" class="callout hidden">
+            Colab opened in your browser and the code is copied. Click inside the cell, press <kbd>Ctrl</kbd>+<kbd>A</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd> then <kbd>Ctrl</kbd>+<kbd>Enter</kbd> and allow Drive.
+            When the line <code>LECTURE_SYNC_URL=…</code> appears, select it and press <kbd>Ctrl</kbd>+<kbd>C</kbd>. The app connects by itself.
+            <button id="copyAgainExt" class="ghost small">Copy code again</button>
+          </div>
+        </div>
+      </li>
+
+      <li id="step3" class="step">
+        <span class="num">3</span>
+        <div class="body">
+          <h3>Sign in to Telegram</h3>
+          <p>Connects automatically once Colab is running. The first time only, Telegram sends you a login code.</p>
+          <div id="tgLogin" class="form hidden">
+            <div class="qr-box">
+              <div id="qrImg" class="qr-img"><span class="muted small">Press the button to show the code</span></div>
+              <div class="qr-help">
+                <b>Fastest and most reliable way</b>
+                <p class="muted small">On your phone open Telegram → <b>Settings → Devices → Link Desktop Device</b>, then scan this code.</p>
+                <p id="qrState" class="small muted"></p>
+                <div class="row"><button id="qrStart" class="primary">Show QR code</button></div>
+                <div id="qrPwBox" class="hidden">
+                  <label>Two-step password <input id="qrPw" type="password" /></label>
+                  <div class="row"><button id="qrPwSend" class="primary">Continue</button></div>
+                </div>
+              </div>
+            </div>
+            <details class="fallback"><summary>Sign in with phone code instead</summary>
+            <label>Phone number <input id="phone" placeholder="+20 1xx xxx xxxx" /></label>
+            <div class="row"><button id="sendCode" class="ghost">Send code</button></div>
+            <label>Code from Telegram <input id="code" inputmode="numeric" /></label>
+            <label>Two-step password <span class="muted">(only if you set one)</span> <input id="pw" type="password" /></label>
+            <div class="row"><button id="signIn" class="primary">Sign in</button></div>
+            </details>
+          </div>
+        </div>
+      </li>
+    </ol>
+
+    <details class="fallback">
+      <summary>Connect with a link instead</summary>
+      <p class="muted">If Colab printed a <code>LECTURE_SYNC_URL=…trycloudflare.com</code> line but the app didn't pick it up, paste the link here.</p>
+      <div class="row">
+        <input id="manualUrl" placeholder="https://xxxx.trycloudflare.com" />
+        <button id="manualConnect" class="ghost">Connect</button>
+      </div>
+      <p class="muted">Your saved Colab notebook (opened every time instead of creating a new file). Copy its address from the browser bar to save it.</p>
+      <div class="row">
+        <input id="notebookUrl" placeholder="https://colab.research.google.com/drive/…" />
+        <button id="saveNotebook" class="ghost">Save</button>
+        <button id="resetNotebook" class="ghost">Use a new notebook</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- the actual workspace -->
+  <main id="workspace" class="workspace hidden">
+    <section class="pane">
+      <div class="pane-head">
+        <h2 data-icon="send">Telegram</h2>
+        <button id="refreshTg" class="ghost small" title="Refresh" data-icon="refresh"></button>
+      </div>
+      <select id="chat"></select>
+      <input id="tgSearch" class="search" type="search" placeholder="Search files by name… (Enter searches the whole chat)" />
+      <ul id="tgFiles" class="list"></ul>
+      <p id="tgEmpty" class="empty hidden">No files in this chat.</p>
+    </section>
+
+    <section class="pane wide">
+      <div class="pane-head">
+        <h2 data-icon="drive">Google Drive</h2>
+        <div class="row tight">
+          <button id="up" class="ghost small" data-icon="up">Up</button>
+          <button id="refreshDrive" class="ghost small" title="Refresh" data-icon="refresh">Refresh</button>
+          <button id="mkdir" class="ghost small" data-icon="plus">New folder</button>
+        </div>
+      </div>
+      <div id="crumb" class="crumb"></div>
+      <div id="driveWarn" class="callout hidden">
+        Google Drive is not connected in Colab, so nothing shows here. Open the Colab page, run the cell again and press
+        <b>Connect to Google Drive</b>, then allow access. After that press <b>Refresh</b>.
+      </div>
+      <input id="driveSearch" class="search" type="search" placeholder="Search in this folder…" />
+      <ul id="driveList" class="list"></ul>
+      <p id="driveEmpty" class="empty hidden">This folder is empty.</p>
+      <p class="hint">Files from Telegram are extracted into the folder you're looking at.</p>
+    </section>
+
+    <section class="pane">
+      <div class="pane-head"><h2 data-icon="jobs">Jobs</h2></div>
+      <ul id="jobs" class="list"></ul>
+      <p id="jobsEmpty" class="empty">Nothing running. Press <b>Send to Drive</b> on a Telegram file.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Developed by <b>Ahmed Omran</b></span>
+    <a href="#" data-open="https://github.com/92EPK">GitHub · @92EPK</a>
+    <span id="ver" class="muted"></span>
+  </footer>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h3>Settings</h3>
+      <p class="muted">Your keys stay on this PC, encrypted with your Windows account.</p>
+      <label>Telegram API ID <input id="apiId" inputmode="numeric" /></label>
+      <label>Telegram API Hash <input id="apiHash" type="password" placeholder="leave empty to keep the saved one" /></label>
+      <a href="#" data-open="https://my.telegram.org/apps" class="small">Where do I get these?</a>
+      <div class="row end">
+        <button value="cancel" class="ghost">Close</button>
+        <button type="button" id="saveKeys" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="about">
+    <form method="dialog" class="about">
+      <img src="assets/logo.png" alt="" />
+      <h3>LectureSync</h3>
+      <p id="aboutVer" class="muted"></p>
+      <p>Pulls lecture recordings from Telegram, extracts them on Google Colab and puts them straight into Google Drive — without using your home internet.</p>
+      <dl>
+        <dt>Author</dt><dd>Ahmed Omran</dd>
+        <dt>Email</dt><dd><a href="#" data-open="mailto:B9x@outlook.com">B9x@outlook.com</a></dd>
+        <dt>GitHub</dt><dd><a href="#" data-open="https://github.com/92EPK">@92EPK</a></dd>
+      </dl>
+      <p class="muted small">© Ahmed Omran. All rights reserved.</p>
+      <div class="row end"><button value="ok" class="primary">Close</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="prompt">
+    <form method="dialog">
+      <p id="promptText"></p>
+      <input id="promptInput" />
+      <div class="row end">
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="ok" id="promptOk" class="primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
