@@ -1,30 +1,28 @@
 /*
  * LectureSync - main process
  * Author: Ahmed Omran <B9x@outlook.com> · https://github.com/92EPK
+ * A student initiative - CS Diploma, Faculty of Graduate Studies for Statistical
+ * Research (FGSSR), Cairo University · https://cs-fgssr.pages.dev/
  *
  * Owns three things the page must never touch directly:
- *   - the saved settings (Telegram keys + per-run access token, DPAPI-encrypted)
+ *   - the saved settings (Telegram keys + access token, OS-encrypted)
  *   - every HTTP call to the Colab worker
- *   - the embedded Colab window: it pastes the bundled worker cell, runs it,
- *     and reads the tunnel URL back out of the cell output.
+ *   - the lecturesync:// deep link that the hosted Colab notebook uses to
+ *     hand the tunnel URL + token back to the app.
+ *
+ * Google sign-in never happens inside Electron (Google blocks embedded
+ * browsers). Colab is always opened in the user's real default browser.
  */
 const {
-  app, BrowserWindow, ipcMain, safeStorage, Notification, clipboard, shell, session,
+  app, BrowserWindow, ipcMain, safeStorage, Notification, clipboard, shell, dialog,
 } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
 const path = require("path");
 
-// Google refuses sign-in from anything that says "Electron" in the UA.
-// Match the real engine version so Google's checks don't see a mismatch.
-const CHROME_MAJOR = (process.versions.chrome || "108.0.0.0").split(".")[0];
-const CHROME_UA =
-  `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
-app.userAgentFallback = CHROME_UA;
-app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
-// Let passkeys use Windows Hello (PIN / fingerprint) instead of only USB keys.
-app.commandLine.appendSwitch("enable-features", "WebAuthentication,WebAuthenticationWindows");
+const PROTOCOL = "lecturesync";
+const NOTEBOOK_URL = "https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb";
 
 const SECRET_KEYS = ["token", "apiHash"];
 const cfgFile = () => path.join(app.getPath("userData"), "config.json");
@@ -124,98 +122,98 @@ function buildCell(token) {
 }
 
 let mainWin = null;
-let colabWin = null;
-let urlWatch = null;
+let pendingLink = null;
 
 function sendToUi(channel, payload) {
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, payload);
 }
 
-async function pasteAndRun(wc) {
-  // Colab's editor needs a focused cell before a paste lands in it.
-  const focused = await wc.executeJavaScript(`(() => {
-    const ed = document.querySelector('.cell .monaco-editor textarea, .cell .inputarea, .cell textarea');
-    if (!ed) return false;
-    ed.focus();
-    return true;
-  })()`).catch(() => false);
-  if (!focused) return false;
-  // Saved notebooks already hold an older copy of the cell: replace it, don't append.
-  wc.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["control"] });
-  wc.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: ["control"] });
-  await new Promise((r) => setTimeout(r, 200));
-  wc.paste();
-  await new Promise((r) => setTimeout(r, 700));
-  wc.sendInputEvent({ type: "keyDown", keyCode: "Enter", modifiers: ["control"] });
-  wc.sendInputEvent({ type: "keyUp", keyCode: "Enter", modifiers: ["control"] });
+function focusMain() {
+  if (!mainWin || mainWin.isDestroyed()) return;
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.show();
+  mainWin.focus();
+}
+
+// Verify the worker answers with this token, then save and go green.
+async function connectTo(url, token) {
+  const t = token || readConfig().token;
+  await call("GET", "/disk", null, { url, token: t });
+  writeConfig({ url, token: t });
+  sendToUi("colab:connected", { url });
   return true;
 }
 
-async function scanForUrl() {
-  if (!colabWin || colabWin.isDestroyed()) return;
-  // Cell output renders inside cross-origin iframes, so look in every frame.
-  const frames = colabWin.webContents.mainFrame.framesInSubtree;
-  for (const f of frames) {
-    const text = await f.executeJavaScript("document.body ? document.body.innerText : ''").catch(() => "");
-    const m = /LECTURE_SYNC_URL=(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/.exec(text || "");
-    if (m) return connectTo(m[1]);
-  }
-}
+// ------------------------------------------------------------ deep link
+// The hosted notebook ends with a button pointing at
+//   lecturesync://connect?url=https://xxxx.trycloudflare.com&token=<random>
+// The OS hands that link to this app. No local server, no open ports.
+const TUNNEL_RE = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/?$/;
 
-async function connectTo(url) {
-  const { token } = readConfig();
+function parseDeepLink(link) {
   try {
-    await call("GET", "/disk", null, { url, token });
+    const u = new URL(link);
+    if (u.protocol !== `${PROTOCOL}:`) return null;
+    const action = (u.hostname || u.pathname.replace(/^\/+/, "")).toLowerCase();
+    if (action !== "connect") return null;
+    const url = (u.searchParams.get("url") || "").trim();
+    const token = (u.searchParams.get("token") || "").trim();
+    if (!TUNNEL_RE.test(url) || !/^[A-Za-z0-9_-]{16,128}$/.test(token)) return null;
+    return { url: url.replace(/\/$/, ""), token };
   } catch {
-    return; // tunnel printed but worker not up yet, keep watching
+    return null;
   }
-  clearInterval(urlWatch);
-  urlWatch = null;
-  writeConfig({ url });
-  if (colabWin && !colabWin.isDestroyed()) colabWin.hide(); // keep it alive, the runtime needs the tab
-  sendToUi("colab:connected", { url });
 }
 
-// Google's sign-in checks compare the UA with what the JS engine really is.
-// Pretending to be Firefox inside Chromium is an obvious mismatch and gets the
-// "browser may not be secure" page, so present the real engine: plain Chrome UA
-// with the same major version, no "Electron"/app name, and untouched Client
-// Hints (they already report Chromium and match navigator.userAgentData).
-let googleSessionReady = false;
-function prepareGoogleSession() {
-  const s = session.fromPartition("persist:colab");
-  if (googleSessionReady) return s;
-  googleSessionReady = true;
-  s.setUserAgent(CHROME_UA, "en-US,en");
-  s.webRequest.onBeforeSendHeaders((d, cb) => {
-    const h = d.requestHeaders;
-    h["User-Agent"] = CHROME_UA;
-    cb({ requestHeaders: h });
+async function handleDeepLink(link) {
+  if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isLoading()) {
+    pendingLink = link; // delivered once the window is ready
+    return;
+  }
+  focusMain();
+  const p = parseDeepLink(link);
+  if (!p) return sendToUi("colab:link-error", "That link isn't a valid LectureSync connect link.");
+  // Any web page can fire a custom-protocol link, so the user confirms the address.
+  const { response } = await dialog.showMessageBox(mainWin, {
+    type: "question",
+    buttons: ["Connect", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Connect LectureSync",
+    message: "Connect to your Colab engine?",
+    detail: `Only press Connect if you just clicked the button in YOUR Colab notebook.\n\n${p.url}`,
   });
-  return s;
+  if (response !== 0) return;
+  sendToUi("colab:stage", "linking");
+  try {
+    await connectTo(p.url, p.token);
+  } catch (e) {
+    sendToUi("colab:link-error", "Colab isn't answering yet. Wait a few seconds and click the button again.");
+  }
 }
 
-// ------------------------------------------------------------ system-browser fallback
-// When Google still refuses the in-app window, the user runs the cell in their own
-// browser and just copies the LECTURE_SYNC_URL line; we pick it up from the clipboard.
+// ------------------------------------------------------------ open Colab
+// Google blocks sign-in inside embedded browsers (Electron included), so Colab
+// is ALWAYS opened in the user's real default browser where they're already signed in.
+function startColab() {
+  shell.openExternal(NOTEBOOK_URL);
+  sendToUi("colab:stage", "browser");
+}
+
+// Fallback for users who prefer their own notebook: copy the cell, then catch
+// the LECTURE_SYNC_URL line from the clipboard.
 let clipWatch = null;
 function watchClipboard() {
   clearInterval(clipWatch);
   const started = Date.now();
   clipWatch = setInterval(() => {
     if (Date.now() - started > 30 * 60 * 1000) return clearInterval(clipWatch);
-    const text = clipboard.readText() || "";
-    rememberNotebook(text.trim()); // user copied the notebook address from the browser bar
-    const m = /(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/.exec(text);
-    if (m) {
-      clearInterval(clipWatch);
-      clipWatch = null;
-      connectTo(m[1]);
-    }
+    const m = /(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/.exec(clipboard.readText() || "");
+    if (m) connectTo(m[1]).then(() => { clearInterval(clipWatch); clipWatch = null; }, () => {});
   }, 1500);
 }
 
-// One token per install, so a saved notebook's cell keeps working across launches.
+// One token per install for the copy/paste cell.
 function getToken() {
   const c = readConfig();
   if (c.token) return c.token;
@@ -224,89 +222,11 @@ function getToken() {
   return token;
 }
 
-const NOTEBOOK_RE = /^https:\/\/colab\.research\.google\.com\/drive\/[A-Za-z0-9_-]+/;
-const NEW_NOTEBOOK = "https://colab.research.google.com/#create=true";
-// Saved notebook first; a fresh one only when none is saved (or the user reset it).
-function notebookUrl() {
-  const { notebook } = readConfig();
-  return notebook && NOTEBOOK_RE.test(notebook) ? notebook : NEW_NOTEBOOK;
-}
-function rememberNotebook(url) {
-  const m = NOTEBOOK_RE.exec(url || "");
-  if (!m || readConfig().notebook === m[0]) return;
-  writeConfig({ notebook: m[0] });
-  sendToUi("colab:notebook", { notebook: m[0] });
-}
-
 function startColabExternal() {
-  const token = getToken();
-  writeConfig({ url: "" });
-  clipboard.writeText(buildCell(token));
-  if (colabWin && !colabWin.isDestroyed()) colabWin.destroy();
-  clearInterval(urlWatch);
-  // Give the user a moment to paste the cell before we start reading the clipboard.
+  clipboard.writeText(buildCell(getToken()));
   setTimeout(watchClipboard, 8000);
-  shell.openExternal(notebookUrl());
+  shell.openExternal("https://colab.research.google.com/#create=true");
   sendToUi("colab:stage", "external");
-}
-
-function startColab() {
-  const token = getToken();
-  writeConfig({ url: "" });
-  clipboard.writeText(buildCell(token));
-
-  if (colabWin && !colabWin.isDestroyed()) colabWin.destroy();
-  const colabSession = prepareGoogleSession();
-  colabWin = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    title: "Google Colab - LectureSync engine",
-    parent: mainWin,
-    backgroundColor: "#ffffff",
-    webPreferences: { session: colabSession, contextIsolation: true, nodeIntegration: false },
-  });
-  colabWin.setMenuBarVisibility(false);
-  colabWin.webContents.setUserAgent(CHROME_UA);
-  // Google sign-in and the Drive permission prompt open popups; keep them in the same session.
-  colabWin.webContents.setWindowOpenHandler(() => ({
-    action: "allow",
-    overrideBrowserWindowOptions: {
-      parent: colabWin,
-      webPreferences: { session: colabSession, contextIsolation: true, nodeIntegration: false },
-    },
-  }));
-  colabWin.webContents.on("did-create-window", (w) => w.webContents.setUserAgent(CHROME_UA));
-  colabWin.on("closed", () => {
-    colabWin = null;
-    sendToUi("colab:closed");
-  });
-
-  let tries = 0;
-  const tryPaste = async () => {
-    if (!colabWin) return;
-    const url = colabWin.webContents.getURL();
-    if (!url.includes("colab.research.google.com")) return; // still on the Google login page
-    if (await pasteAndRun(colabWin.webContents)) return sendToUi("colab:stage", "running");
-    if (++tries < 15) setTimeout(tryPaste, 1500);
-    else sendToUi("colab:stage", "manual");
-  };
-  colabWin.webContents.on("did-finish-load", () => setTimeout(tryPaste, 3000));
-  // A new notebook gets its /drive/<id> address after Colab saves it; remember it.
-  const track = (_e, u) => rememberNotebook(u);
-  colabWin.webContents.on("did-navigate", track);
-  colabWin.webContents.on("did-navigate-in-page", track);
-  colabWin.webContents.on("did-fail-load", (_e, code, _d, u, isMain) => {
-    // Saved notebook deleted or unreachable: fall back to a new one once.
-    if (isMain && u !== NEW_NOTEBOOK && code !== -3) {
-      writeConfig({ notebook: "" });
-      colabWin.loadURL(NEW_NOTEBOOK);
-    }
-  });
-  colabWin.loadURL(notebookUrl());
-
-  clearInterval(urlWatch);
-  urlWatch = setInterval(scanForUrl, 2500);
-  sendToUi("colab:stage", "opening");
 }
 
 // ------------------------------------------------------------ IPC
@@ -330,23 +250,49 @@ ipcMain.handle("telegram:configure", () => {
 });
 ipcMain.handle("api", (_e, method, route, body) => call(method, route, body));
 ipcMain.handle("colab:start", () => startColab());
+// Fallback: classic copy/paste of the cell into the user's own notebook.
 ipcMain.handle("colab:external", () => startColabExternal());
-ipcMain.handle("colab:show", () => colabWin && colabWin.show());
 ipcMain.handle("colab:copy", () => clipboard.writeText(buildCell(getToken())));
-ipcMain.handle("colab:notebook:get", () => readConfig().notebook || "");
-ipcMain.handle("colab:notebook:set", (_e, url) => {
-  const v = String(url || "").trim();
-  if (v && !NOTEBOOK_RE.test(v)) throw new Error("Paste a link like https://colab.research.google.com/drive/…");
-  writeConfig({ notebook: v ? NOTEBOOK_RE.exec(v)[0] : "" });
-});
 ipcMain.handle("open", (_e, url) => {
   // Only the handful of links the UI actually shows.
-  if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com)/.test(url)) shell.openExternal(url);
+  if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com|cs-fgssr\.pages\.dev)/i.test(url)) shell.openExternal(url);
   else if (url.startsWith("mailto:B9x@outlook.com")) shell.openExternal(url);
 });
 ipcMain.handle("notify", (_e, title, body) => new Notification({ title, body }).show());
 
-app.whenReady().then(() => {
+// ------------------------------------------------------------ deep link wiring
+
+// Only one copy of the app runs; a second launch (from the browser link) hands
+// its arguments to the first and exits.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  if (process.defaultApp && process.argv.length >= 2) {
+    // `npm start` during development: register with the electron binary + script path.
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient(PROTOCOL);
+  }
+
+  app.on("second-instance", (_e, argv) => {
+    const link = argv.find((a) => a.startsWith(`${PROTOCOL}://`));
+    if (link) handleDeepLink(link);
+  });
+  // macOS delivers links through this event instead of argv.
+  app.on("open-url", (e, link) => {
+    e.preventDefault();
+    handleDeepLink(link);
+  });
+
+  app.whenReady().then(() => {
+    createMainWindow();
+    // Windows/Linux: the app may have been cold-started by the link itself.
+    const link = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));
+    if (link) handleDeepLink(link);
+  });
+}
+
+function createMainWindow() {
   mainWin = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -373,12 +319,16 @@ app.whenReady().then(() => {
     const devKey = input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i");
     if (input.type === "keyDown" && devKey) mainWin.webContents.toggleDevTools();
   });
-  // Mirror page console into the terminal so UI failures are visible.
   mainWin.webContents.on("console-message", (_e, level, message, line, source) => {
     console.log(`[ui:${level}] ${message} (${source}:${line})`);
   });
+  // The page must never navigate away or open windows of its own.
+  mainWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWin.webContents.on("did-finish-load", () => {
+    if (pendingLink) { const l = pendingLink; pendingLink = null; handleDeepLink(l); }
+  });
   if (process.env.LS_DEBUG === "1") mainWin.webContents.openDevTools({ mode: "detach" });
   mainWin.loadFile(path.join(__dirname, "ui", "index.html"));
-});
+}
 
 app.on("window-all-closed", () => app.quit());

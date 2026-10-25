@@ -162,3 +162,30 @@ LectureSync is an educational utility. It uses only official interfaces — the 
 [MIT](LICENSE) © 2026 Ahmed Omran
 
 **Author:** Ahmed Omran · [B9x@outlook.com](mailto:B9x@outlook.com) · GitHub [@92EPK](https://github.com/92EPK)
+
+## About this project — a student initiative
+
+LectureSync was built by **Ahmed Omran**, a Computer Science Diploma student at the
+**Faculty of Graduate Studies for Statistical Research (FGSSR), Cairo University**,
+as a free tool for fellow students. Lectures are shared on Telegram as 0.5–4 GB files,
+and many students can't download and re-upload them on limited home internet —
+LectureSync moves them straight to Google Drive through Google Colab instead.
+
+It is part of the student platform **[cs-fgssr.pages.dev](https://cs-fgssr.pages.dev/)**.
+
+## Starting the Colab engine (no "browser not secure" error)
+
+Google blocks Google-account sign-in inside embedded browsers (Electron, WebViews),
+showing *"This browser or app may not be secure"*. So the app **never** signs in to
+Google itself:
+
+1. **Start Colab engine** opens the ready notebook
+   [`LectureSync.ipynb`](https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb)
+   in your normal browser, where you're already signed in.
+2. Press **Run ▶** and allow Google Drive.
+3. Click the green **Connect to LectureSync** button → choose **Open LectureSync** →
+   confirm in the app. Done — no copy/paste.
+
+The button is a `lecturesync://connect?url=…&token=…` link handled by the OS. There is
+**no local server and no open port**, so firewalls and antivirus have nothing to flag.
+A fallback "Connect with a link instead" box remains for unusual setups.

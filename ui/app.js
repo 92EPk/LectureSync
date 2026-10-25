@@ -135,28 +135,21 @@ async function renderSetup() {
 }
 
 const STAGES = {
-  opening: "Colab is opening. Sign in to Google if it asks.",
-  running: "Code pasted and running. When Google asks, allow Drive access. This takes about a minute…",
-  manual: "",
+  browser: "Colab opened in your browser. Press Run ▶, allow Google Drive, then click the green \"Connect to LectureSync\" button that appears.",
+  linking: "Connecting to your Colab engine…",
   external: "",
 };
 ls.onStage((stage) => {
   setStatus("Starting Colab…", "wait");
-  $("showColab").classList.remove("hidden");
   $("stageText").textContent = STAGES[stage] || "";
-  $("manualHelp").classList.toggle("hidden", stage !== "manual");
   $("externalHelp").classList.toggle("hidden", stage !== "external");
-  if (stage === "external") $("showColab").classList.add("hidden");
 });
 ls.onConnected(() => {
   toast("Connected to Colab.");
+  $("stageText").textContent = "";
   boot();
 });
-ls.onColabClosed(() => {
-  $("showColab").classList.add("hidden");
-  connected = false;
-  boot();
-});
+ls.onLinkError((msg) => toast(msg, true));
 
 // ------------------------------------------------ status
 
@@ -336,26 +329,6 @@ $("openAbout").onclick = async () => {
 $("startColab").onclick = () => guard(ls.startColab);
 $("startColabExternal").onclick = () => guard(ls.startColabExternal);
 $("copyAgainExt").onclick = () => { ls.copyCell(); toast("Copied."); };
-$("showColab").onclick = () => ls.showColab();
-$("copyAgain").onclick = () => { ls.copyCell(); toast("Copied."); };
-function showNotebook(nb) {
-  $("notebookUrl").value = nb || "";
-  $("notebookText").textContent = nb
-    ? "Opens your saved notebook, no new files are created."
-    : "First run creates one notebook; it is reused after that.";
-}
-ls.getNotebook().then(showNotebook);
-ls.onNotebook(({ notebook }) => { showNotebook(notebook); toast("Notebook saved, it will be reused."); });
-$("saveNotebook").onclick = () => guard(async () => {
-  await ls.setNotebook($("notebookUrl").value);
-  showNotebook($("notebookUrl").value.trim());
-  toast("Saved.");
-});
-$("resetNotebook").onclick = () => guard(async () => {
-  await ls.setNotebook("");
-  showNotebook("");
-  toast("Next start opens a new notebook.");
-});
 $("manualConnect").onclick = () => guard(async () => {
   await ls.setUrl($("manualUrl").value.trim());
   boot();
@@ -459,7 +432,6 @@ async function boot() {
       signedIn = Boolean(r && r.telegram);
       if (r) setStatus(signedIn ? "Connected" : "Connected · Telegram sign-in needed", signedIn ? "on" : "wait");
     }
-    $("showColab").classList.remove("hidden");
   }
   await renderSetup();
   if (connected && signedIn) {

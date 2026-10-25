@@ -241,3 +241,39 @@ Current releases are unsigned; Windows SmartScreen and macOS Gatekeeper therefor
 | ADR-6 | Cloudflare quick tunnel | ngrok; port forwarding | No account, no ports, free TLS; token supplies authentication. |
 | ADR-7 | Serial job queue | Unbounded concurrency | Predictable disk use and Telegram rate-limit safety. |
 | ADR-8 | Standalone repository | Monorepo with other projects | Independent versioning, releases and audit; no shared blast radius. |
+
+## Control-plane handshake (v1.1)
+
+**Problem.** The previous design loaded Colab inside an Electron `BrowserWindow` and
+spoofed a Chrome User-Agent. Google's sign-in protection inspects the runtime itself
+(not just the UA) and refuses embedded browsers, so students saw
+*"This browser or app may not be secure."* No amount of spoofing fixes this reliably.
+
+**Design.**
+
+```text
+App ──shell.openExternal──▶ Default browser ──▶ colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb
+                                                   │ Run: mount Drive, fetch worker/server.py,
+                                                   │ start uvicorn + cloudflared, random token
+                                                   ▼
+App ◀──OS protocol handler── lecturesync://connect?url=https://x.trycloudflare.com&token=…
+ │  validate URL (trycloudflare only) + token format → user confirms dialog
+ └─ GET /disk with token → save (encrypted) → Connected
+```
+
+- **Hosted notebook**: `LectureSync.ipynb` in the repo root; Colab's GitHub integration
+  opens it directly. The worker code is fetched from `worker/server.py` on `main`.
+- **Per-session secret**: the notebook generates a fresh `secrets.token_urlsafe(32)`
+  every run; it only exists in the user's Colab tab and the deep link.
+- **Deep link instead of a loopback server**: no listening socket on the student's
+  PC → no firewall prompt, no antivirus heuristics. Registered via
+  `app.setAsDefaultProtocolClient` + electron-builder `protocols`; delivered through
+  `second-instance` (Windows/Linux) and `open-url` (macOS) with a single-instance lock.
+- **Abuse guard**: any web page can fire a custom-protocol link, so the app accepts only
+  `https://*.trycloudflare.com` URLs, checks the token format, asks the user to confirm,
+  and verifies the worker answers with that token before saving it.
+
+## Project context
+
+A student initiative by a CS Diploma student at FGSSR, Cairo University, for fellow
+students — see [cs-fgssr.pages.dev](https://cs-fgssr.pages.dev/).

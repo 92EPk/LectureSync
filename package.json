@@ -1,7 +1,7 @@
 {
   "name": "lecturesync",
   "productName": "LectureSync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-bandwidth desktop orchestrator that moves lecture archives from Telegram to Google Drive via ephemeral Colab compute.",
   "author": "Ahmed Omran <B9x@outlook.com>",
   "homepage": "https://github.com/92EPK/LectureSync",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.ahmedomran.lecturesync",
-    "copyright": "Copyright \u00a9 2026 Ahmed Omran",
+    "copyright": "Copyright © 2026 Ahmed Omran",
     "asar": true,
     "directories": {
       "output": "release"
@@ -56,7 +56,10 @@
       "icon": "build/icon.png",
       "category": "Utility",
       "maintainer": "Ahmed Omran <B9x@outlook.com>",
-      "synopsis": "Telegram lectures to Google Drive via Colab"
+      "synopsis": "Telegram lectures to Google Drive via Colab",
+      "mimeTypes": [
+        "x-scheme-handler/lecturesync"
+      ]
     },
     "appImage": {
       "artifactName": "LectureSync-${version}-${arch}.AppImage"
@@ -91,7 +94,15 @@
       "artifactName": "LectureSync-${version}-${arch}.dmg",
       "title": "LectureSync ${version}"
     },
-    "publish": null
+    "publish": null,
+    "protocols": [
+      {
+        "name": "LectureSync",
+        "schemes": [
+          "lecturesync"
+        ]
+      }
+    ]
   },
   "allowScripts": {
     "electron@33.4.11": true

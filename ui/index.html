@@ -22,7 +22,6 @@
       <div class="meter"><i id="diskFill"></i></div>
     </div>
     <nav>
-      <button id="showColab" class="ghost hidden" data-icon="colab">Colab window</button>
       <button id="toggleTheme" class="ghost" title="Dark / light">Theme</button>
       <button id="openSettings" class="ghost" data-icon="gear">Settings</button>
       <button id="openAbout" class="ghost" data-icon="info">About</button>
@@ -52,19 +51,14 @@
         <span class="num">2</span>
         <div class="body">
           <h3>Start the Colab engine</h3>
-          <p>A Google Colab window opens inside the app. Sign in with your Google account if asked, then allow Drive access when Google asks. The app pastes and runs everything for you.</p>
+          <p>The ready LectureSync notebook opens in your own browser (Chrome, Edge…), where you're already signed in to Google. Press Run ▶, allow Google Drive, then click the green <b>Connect to LectureSync</b> button. No copying, no pasting.</p>
           <div class="row">
             <button id="startColab" class="primary" data-icon="play">Start Colab engine</button>
-            <button id="startColabExternal" class="ghost">Google won't sign me in? Use my browser</button>
+            <button id="startColabExternal" class="ghost">Use my own notebook (copy &amp; paste)</button>
           </div>
-          <p id="notebookText" class="muted"></p>
           <p id="stageText" class="muted"></p>
-          <div id="manualHelp" class="callout hidden">
-            The code is already copied. In the Colab window: click the empty cell, press <kbd>Ctrl</kbd>+<kbd>V</kbd>, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.
-            <button id="copyAgain" class="ghost small">Copy again</button>
-          </div>
           <div id="externalHelp" class="callout hidden">
-            Colab opened in your browser and the code is copied. Click inside the cell, press <kbd>Ctrl</kbd>+<kbd>A</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd> then <kbd>Ctrl</kbd>+<kbd>Enter</kbd> and allow Drive.
+            A new Colab notebook opened in your browser and the code is copied. Click inside the cell, press <kbd>Ctrl</kbd>+<kbd>V</kbd> then <kbd>Ctrl</kbd>+<kbd>Enter</kbd> and allow Drive.
             When the line <code>LECTURE_SYNC_URL=…</code> appears, select it and press <kbd>Ctrl</kbd>+<kbd>C</kbd>. The app connects by itself.
             <button id="copyAgainExt" class="ghost small">Copy code again</button>
           </div>
@@ -104,16 +98,10 @@
 
     <details class="fallback">
       <summary>Connect with a link instead</summary>
-      <p class="muted">If Colab printed a <code>LECTURE_SYNC_URL=…trycloudflare.com</code> line but the app didn't pick it up, paste the link here.</p>
+      <p class="muted">If Colab printed a <code>LECTURE_SYNC_URL=…trycloudflare.com</code> line but the button didn't work, paste the link here.</p>
       <div class="row">
         <input id="manualUrl" placeholder="https://xxxx.trycloudflare.com" />
         <button id="manualConnect" class="ghost">Connect</button>
-      </div>
-      <p class="muted">Your saved Colab notebook (opened every time instead of creating a new file). Copy its address from the browser bar to save it.</p>
-      <div class="row">
-        <input id="notebookUrl" placeholder="https://colab.research.google.com/drive/…" />
-        <button id="saveNotebook" class="ghost">Save</button>
-        <button id="resetNotebook" class="ghost">Use a new notebook</button>
       </div>
     </details>
   </section>
@@ -184,8 +172,10 @@
       <h3>LectureSync</h3>
       <p id="aboutVer" class="muted"></p>
       <p>Pulls lecture recordings from Telegram, extracts them on Google Colab and puts them straight into Google Drive — without using your home internet.</p>
+      <p class="small">A free student initiative built by a Computer Science Diploma student at the Faculty of Graduate Studies for Statistical Research (FGSSR), Cairo University, to help fellow students move their lectures easily.</p>
       <dl>
         <dt>Author</dt><dd>Ahmed Omran</dd>
+        <dt>Platform</dt><dd><a href="#" data-open="https://cs-fgssr.pages.dev/">cs-fgssr.pages.dev</a></dd>
         <dt>Email</dt><dd><a href="#" data-open="mailto:B9x@outlook.com">B9x@outlook.com</a></dd>
         <dt>GitHub</dt><dd><a href="#" data-open="https://github.com/92EPK">@92EPK</a></dd>
       </dl>
