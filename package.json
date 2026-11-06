@@ -8,6 +8,9 @@
   "license": "MIT",
   "main": "main.cjs",
   "scripts": {
+    "dev": "node scripts/serve-docs.cjs",
+    "build:dev": "node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.cpSync('docs','dist',{recursive:true});fs.cpSync('ui','dist/app',{recursive:true})\"",
+    "build": "npm run build:dev",
     "start": "electron .",
     "build:win": "electron-builder --win nsis portable --x64",
     "build:linux": "electron-builder --linux AppImage deb --x64",

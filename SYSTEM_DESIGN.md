@@ -1,279 +1,204 @@
 # LectureSync — System Design
 
-| | |
+> **Author:** Ahmed Omran · CS Diploma, FGSSR, Cairo University · [@92EPK](https://github.com/92EPK) · B9x@outlook.com
+> **Scope:** design rationale, architecture and trade-offs behind LectureSync. For installation and usage see the [README](README.md).
+
+---
+
+## 1. Problem
+
+My cohort receives lecture recordings (0.5–4 GB each) as zip/rar/7z archives, often split into volumes, inside Telegram groups. Everyone wants them organised in Google Drive. The obvious workflow is *download → extract → re-upload*, and in Egypt it breaks on three real constraints:
+
+| Constraint | Consequence |
 |---|---|
-| **Author** | Ahmed Omran · B9x@outlook.com · GitHub [@92EPK](https://github.com/92EPK) |
-| **Version** | 1.0 |
-| **Status** | In production use by a postgraduate diploma cohort |
-| **Platforms** | Windows 10/11 · macOS 11+ (x64, arm64) · Linux x86-64 |
-| **Repository** | https://github.com/92EPK/LectureSync |
+| **Metered, asymmetric home internet** | Each lecture costs about 2× its size in quota, and the slow upload leg dominates the time. |
+| **Limited local disk** | Extracting needs about 2.2× the archive size free. |
+| **Authentication friction** | Telegram SMS codes are often not delivered on local carriers; Google refuses sign-in inside embedded browsers. |
 
----
+**Design question:** can a student move gigabytes between Telegram, Drive and the web *without spending their own bandwidth*, *without paying for a server*, and *without trusting a third party with their accounts*?
 
-## Abstract
+## 2. Key idea: split control from data
 
-LectureSync is a cross-platform desktop application that moves large, frequently compressed lecture archives from Telegram into Google Drive without the data ever crossing the user's own network link. It achieves this by separating a lightweight **control plane** (an Electron desktop client) from a **data plane** (a disposable worker on the user's own Google Colab VM), connected through an authenticated, ephemeral HTTPS tunnel. The design targets resource-constrained environments — metered, asymmetric consumer bandwidth, limited local storage, and unreliable SMS delivery — and requires no infrastructure owned or operated by the author.
+The user's PC should only **decide**; somewhere with datacenter bandwidth should **move the bytes**.
 
----
+- **Control plane** — a small Electron desktop app. It sends JSON commands and shows progress. It never handles file content.
+- **Data plane** — a FastAPI worker running on the user's **own free Google Colab VM**, which sits inside Google's network, next to Drive and close to Telegram's datacenters.
 
-## 1. Problem statement
+This produces three properties the rest of the design protects:
 
-Lecture recordings (0.5–4 GB each) are distributed as zip/rar/7z archives, often split into volumes, inside Telegram groups. Students need them organised in Google Drive. The conventional path — download, extract, re-upload — exhibits three structural problems in the target environment (Egypt):
-
-1. **Bandwidth cost.** Each lecture consumes ≈ 2 × its size of metered quota, and consumer upload rates make the re-upload the dominant time cost.
-2. **Storage pressure.** Extraction needs ≈ 2.2 × the archive size of free disk space.
-3. **Authentication friction.** Telegram SMS codes are frequently undelivered on local carriers and rejected for datacenter IPs; Google rejects interactive sign-in inside embedded browsers.
-
-## 2. Goals, non-goals and invariants
-
-| ID | Goal | Acceptance measure |
-|---|---|---|
-| G1 | Zero lecture bytes over the user's link | Desktop exchanges only JSON control messages (< 1 MB per session) |
-| G2 | Zero infrastructure cost, zero operator | No author-owned server; compute is the user's own free Colab VM |
-| G3 | Per-user credential isolation | Each user supplies their own Google account and Telegram API keys |
-| G4 | Non-technical usability | Single executable, no Python or CLI, guided three-step setup |
-| G5 | Cross-platform delivery | One codebase; reproducible CI builds for Windows, macOS, Linux |
-
-**Non-goals.** Hosting, indexing or redistributing content; multi-user servers; integration with any third-party platform backend.
-
-**Invariants.**
-
-- *I1 — Data-plane confinement:* lecture bytes flow only `Telegram DC → Colab VM → Google Drive`.
-- *I2 — Zero custody:* the author never receives credentials, sessions, or content.
-- *I3 — Least authority:* the renderer cannot reach the network or the filesystem directly.
-
----
+| Invariant | Meaning |
+|---|---|
+| **Zero bandwidth** | No content byte crosses the user's connection; control traffic is under 1 MB per session. |
+| **Zero cost** | No server owned by me or the user; compute is free Colab, transport is a free Cloudflare quick tunnel. |
+| **Zero custody** | I never receive anyone's credentials, sessions or files. Each user brings their own Telegram API keys and Google account. |
 
 ## 3. Architecture
 
-```text
-┌──────────────────────── Control plane · Desktop (Electron 33) ─────────────────────────┐
-│                                                                                        │
-│  Renderer (ui/)              contextBridge              Main process (main.cjs)        │
-│  · setup wizard        ─────  preload.cjs  ─────►       · config + safeStorage secrets │
-│  · Telegram pane             (allow-listed IPC)         · authenticated worker client  │
-│  · Drive pane                                           · Colab cell builder           │
-│  · Jobs pane                                            · notebook / tunnel discovery  │
-│  · theme, responsive                                    · external-link allow-list     │
-└───────────────────────────────────────────────────────────────┬────────────────────────┘
-                     HTTPS · x-access-token · JSON only          │  opens Colab
-                                                                 │  (system browser)
-┌──────────────────────── Data plane · Google Colab VM (per user) ▼──────────────────────┐
-│  cloudflared quick tunnel ─► uvicorn ─► worker/server.py (FastAPI + Telethon)          │
-│                                             │                         │                │
-│             Telegram MTProto  ◄─────────────┘                         └──► Drive FUSE  │
-│             8 parallel range streams          /content/scratch ─► 7-Zip ─► My Drive    │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph PC["Student PC — control plane"]
+        UI["Renderer UI<br/>(no Node, no network)"]
+        PRE["Preload<br/>allow-listed IPC"]
+        MAIN["Electron main<br/>secrets · HTTP client · deep links"]
+        UI --> PRE --> MAIN
+    end
+
+    subgraph VM["User's Colab VM — data plane"]
+        TUN["Cloudflare quick tunnel"]
+        API["FastAPI worker<br/>token-checked routes"]
+        JOB["Serial job engine"]
+        TOOLS["7-Zip · ffmpeg · yt-dlp"]
+        TUN --> API --> JOB --> TOOLS
+    end
+
+    MAIN -- "HTTPS + token<br/>JSON only" --> TUN
+    JOB <-- "MTProto, 8 parallel streams" --> TG[("Telegram")]
+    JOB <-- "FUSE mount" --> GD[("Google Drive")]
+    JOB -- "HTTPS" --> WEB[("Public links<br/>OneDrive · YouTube · Dropbox …")]
 ```
 
-### 3.1 Components
-
-| Component | Technology | Responsibility |
+| Part | Technology | Responsibility |
 |---|---|---|
-| Renderer | HTML, CSS, vanilla JS | UI state, filtering/search, theming, responsive layout. No Node APIs, no network. |
-| Preload | Electron `contextBridge` | Exposes a fixed, enumerated set of IPC calls — the sole renderer/main interface. |
-| Main process | Node.js (Electron 33) | Secret storage, worker HTTP client, Colab orchestration, URL allow-listing. |
-| Worker | Python 3, FastAPI, Telethon, uvicorn | Telegram session, transfer, extraction, Drive file operations, job queue. |
-| Tunnel | Cloudflare quick tunnel | Ephemeral public HTTPS endpoint without accounts, ports, or DNS. |
+| Renderer (`ui/`) | HTML, CSS, vanilla JS | Interface only. Sandboxed: `contextIsolation`, no `nodeIntegration`. |
+| Preload (`preload.cjs`) | `contextBridge` | The single, enumerated bridge between UI and main process. |
+| Main (`main.cjs`) | Node / Electron 33 | Encrypted config (OS keystore), authenticated worker calls, Colab launch, deep-link validation. |
+| Worker (`worker/server.py`) | FastAPI, Telethon, asyncio | Telegram I/O, job queue, extraction, link import, Drive file operations. |
+| Notebook (`LectureSync.ipynb`) | Colab | Bootstraps the worker: mounts Drive, installs tools, starts uvicorn and the tunnel. |
 
-### 3.2 Why a split control/data plane
+## 4. Connecting the two planes
 
-Placing compute next to both the source (Telegram datacenters) and the sink (Google Drive) converts a consumer-bandwidth problem into a datacenter-bandwidth one. The desktop client becomes stateless with respect to content, which also removes local disk requirements and makes the client trivially portable across operating systems.
+The VM is disposable and its URL changes every session, so the app needs a safe way to find it. I use a custom OS protocol (`lecturesync://`) instead of a local listening server, so the student's PC opens no port and triggers no firewall or antivirus prompt.
 
----
-
-## 4. Session lifecycle
-
-1. **Bootstrap.** The main process loads — or generates once and persists — a 192-bit random access token, then builds a single self-contained Python cell: base64-embedded `server.py`, the token, dependency installation, and tunnel launch. The cell is placed on the clipboard.
-2. **Notebook reuse.** The app opens the user's saved notebook (`colab.research.google.com/drive/<id>`). Only on first run, or after an explicit reset, is a new notebook created; its URL is captured and persisted. This bounds notebook count to one per user.
-3. **Google sign-in.** Delegated to the operating system's default browser. Google's BotGuard fingerprints embedded Chromium; delegation is the industry-standard remedy (VS Code, Slack, Discord) and avoids user-agent spoofing.
-4. **Worker start.** The cell mounts Drive, installs dependencies (Telethon, FastAPI, 7-Zip, cloudflared), starts uvicorn on `127.0.0.1:8000`, and prints `LECTURE_SYNC_URL=https://….trycloudflare.com`.
-5. **Discovery and verification.** The app detects the URL from the clipboard (or manual entry), verifies it with an authenticated `GET /disk`, and persists it.
-6. **Telegram authentication.** The worker loads `MyDrive/.lecture-sync/telegram-<api_id>.session`. If unauthorised, **QR login** (`client.qr_login()`) is the primary flow; the user approves from an already-signed-in phone, eliminating SMS. Phone code and 2FA password remain as fallback.
-7. **Teardown.** Closing Colab discards the VM. The Telegram session persists in the user's Drive, so the next session requires no re-authentication.
-
----
-
-## 5. Transfer pipeline
-
-```text
-queued ─► downloading ─► extracting ─► uploading ─► done
-              │              │             │
-              └──────────────┴─────────────┴──────► failed (reason recorded)
+```mermaid
+sequenceDiagram
+    actor S as Student
+    participant App as Desktop app
+    participant B as System browser
+    participant C as Colab VM
+    S->>App: Connect
+    App->>B: Open hosted notebook
+    B->>C: Run cell
+    C->>C: Mount Drive, start worker + tunnel,<br/>generate 256-bit token
+    C-->>App: lecturesync://connect?url=…trycloudflare.com&token=…
+    App->>App: Check host and token format
+    App->>S: Confirm connection?
+    S->>App: Yes
+    App->>C: GET /disk (with token)
+    C-->>App: 200 OK
+    App->>App: Store endpoint encrypted
 ```
 
-| Stage | Mechanism |
-|---|---|
-| Admission control | Job rejected up front if free scratch space < size × 2.2. |
-| Download | File partitioned into 512 KB-aligned ranges; 8 concurrent `upload.GetFileRequest` workers write by offset. Any part error triggers fallback to Telethon's sequential downloader. Observed throughput rose from ≈ 1.3 MB/s (sequential) to tens of MB/s. |
-| Classification | Extension and split-volume patterns (`.zip .rar .7z .tar .gz .bz2 .xz .tgz`, `.001`, `.partN.rar`, `.zNN`). |
-| Extraction | `7z x` into an isolated scratch directory. |
-| Placement | One top-level item → moved as-is. Multiple items → wrapped in a folder named after the archive (all archive suffixes stripped). Non-archives → moved directly. |
-| Safety net | If extraction fails, the original file is uploaded rather than discarded. |
-| Naming | Collision-safe: `name (2).ext`, `name (3).ext`; never overwrites. |
-| Back-pressure | Telegram `FloodWait` is honoured by sleeping; jobs run serially to stay within rate limits. |
+- Google sign-in happens in the **system browser**, because Google blocks embedded Chromium. This is the same approach VS Code and Slack use.
+- Telegram login uses a **QR code** first (SMS is unreliable here), with phone code and 2FA as fallback. The session file is stored in the user's own Drive, so when Colab recycles the VM the next session reconnects without logging in again.
+- If the protocol handler is unavailable, the app falls back to copying a self-contained bootstrap cell to the clipboard.
 
----
+## 5. Transfer pipelines
 
-## 6. Worker API
+| | Pipeline | Path |
+|---|---|---|
+| **P1** | Telegram → Drive | Parallel download → optional 7-Zip extraction → collision-safe move into Drive |
+| **P2** | Drive → Telegram | Pre-flight checks → optional split/pack → parallel upload |
+| **P3** | Link → Drive / Telegram | Resolve share link or yt-dlp → optional ffmpeg compression → deliver |
 
-All routes except `/health` require the `x-access-token` header.
+### Job lifecycle
 
-| Method · Route | Purpose |
-|---|---|
-| `GET /health` | Liveness, key configuration, Telegram authorisation state |
-| `GET /disk` | Scratch-disk usage; also used for token verification |
-| `POST /telegram/configure` | `{api_id, api_hash}` → open the per-user client |
-| `POST /telegram/qr/start` · `GET /telegram/qr/status` · `POST /telegram/qr/password` | QR login and 2FA |
-| `POST /telegram/send-code` · `POST /telegram/sign-in` | Phone-code fallback |
-| `GET /telegram/chats` | Dialog list |
-| `GET /telegram/files?chat_id=&q=` | Documents in a chat, with server-side search |
-| `GET /drive/list?path=` | Directory listing under My Drive (fault-tolerant per entry) |
-| `POST /drive/mkdir` · `POST /drive/rename` · `POST /drive/delete` | Folder management, path-confined |
-| `POST /jobs` · `GET /jobs` | Enqueue a transfer; poll progress |
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> downloading
+    downloading --> extracting
+    extracting --> uploading
+    downloading --> uploading: no extraction
+    uploading --> done
+    downloading --> failed
+    extracting --> failed
+    uploading --> failed
+    failed --> queued: retry
+    queued --> paused
+    paused --> queued: resume
+    downloading --> cancelled
+    extracting --> cancelled
+    uploading --> cancelled
+    done --> [*]
+```
 
----
+Each job works in its own scratch directory, which is deleted on success, failure or cancellation.
+
+## 6. Engineering problems I solved
+
+### 6.1 Telegram downloads were too slow
+Telethon downloads one file sequentially, and on Colab I measured about **1.3 MB/s**. Two causes:
+
+1. **One stream.** I split each file into 512 KB-aligned ranges and fetch them with **8 concurrent `GetFileRequest` workers** that write by offset. Throughput went from ~1.3 MB/s to **tens of MB/s**.
+2. **CPU-bound encryption.** MTProto encrypts every chunk with AES-IGE; in pure Python this saturates one core. The worker uses the native `tgcrypto` backend when available.
+
+If any part fails, the job falls back to the sequential downloader, so the speed-up never costs correctness.
+
+### 6.2 Uploads to Telegram
+Uploads use 8 MTProto senders fed by **one sequential Drive reader**. Several random readers on a FUSE mount slowed it down, while a single reader keeps the mount efficient.
+
+### 6.3 Files bigger than Telegram allows
+Telegram caps files at 2 GB (4 GB with Premium). A pre-flight call returns size, limit and a split plan *before any byte is read*; oversized files are cut into 7z volumes only after the user agrees.
+
+### 6.4 Never losing data
+- **Admission control:** a job is rejected up front if scratch space is below size × 2.2.
+- **Extraction fallback:** if extraction fails, the original archive is uploaded instead of being dropped.
+- **No overwrites:** name collisions become `name (2).ext`.
+- **Safe deletes:** Drive deletions go to trash and require typing the exact name.
+
+### 6.5 Respecting rate limits
+Jobs run one at a time and Telegram `FloodWait` responses are honoured. Simple serial scheduling made disk usage predictable and kept accounts away from bans.
 
 ## 7. Security model
 
-### 7.1 Trust boundaries
-
-1. Renderer ↔ main process (IPC, allow-listed).
-2. Desktop ↔ worker (public internet, token-authenticated TLS).
-3. Worker ↔ Telegram / Google (official APIs, user credentials).
-
-### 7.2 Threats and mitigations
+```text
+ Renderer ──IPC──▶ Main ──HTTPS + token──▶ Worker ──official APIs──▶ Telegram / Google / link hosts
+ untrusted         trusted                 trusted (user-owned VM)
+```
 
 | Threat | Mitigation |
 |---|---|
-| Tunnel URL leaked or guessed | Every request requires a 192-bit token; the URL alone confers no access. |
-| Secrets at rest on the desktop | API hash and token encrypted with Electron `safeStorage` → DPAPI (Windows), Keychain (macOS), libsecret (Linux). |
-| Renderer compromise (XSS) | `contextIsolation: true`, `nodeIntegration: false`, enumerated preload API; all network I/O in the main process. |
-| Malicious or phishing links | `shell.openExternal` restricted to an explicit domain allow-list. |
-| Path traversal on Drive | Paths resolved and required to remain under `/content/drive/MyDrive`; root deletion refused. |
-| Destructive user error | Deletion requires typing the exact name and moves items to Drive trash (30-day recovery). |
-| Privilege escalation | Runs as invoker; no services, no elevation. |
-| Supply-chain tampering of binaries | Artifacts built in clean CI runners from tagged source; SHA-256 manifest published with every release. |
-| Author access to user data | Architecturally impossible: no author-run infrastructure, no telemetry (invariant I2). |
+| Someone finds the tunnel URL | Every route except `/health` requires a per-session high-entropy token. |
+| A web page fires a forged `lecturesync://` link | Host must be `*.trycloudflare.com`, the token format is checked, the user confirms, and a live authenticated call verifies it. |
+| XSS in the UI reaching the OS | Renderer isolated; only allow-listed IPC; all network I/O happens in the main process. |
+| Path traversal on Drive | Every path is resolved and confined to `/content/drive/MyDrive`. |
+| Secrets on disk | Encrypted with Electron `safeStorage` (DPAPI / Keychain / libsecret). Archive passwords stay in memory for one job. |
+| Tampered binaries | Built in clean GitHub Actions runners from tagged source, with a published SHA-256 manifest. |
 
-**OAuth scope note.** The consent screen shown by `drive.mount()` belongs to Google's own Colab/Drive client. LectureSync registers no OAuth client and requests no scopes of its own.
+There is no telemetry or analytics. LectureSync registers no OAuth client of its own; the Drive consent screen belongs to Colab.
 
----
+## 8. Design decisions and trade-offs
 
-## 8. Fault tolerance
+| Decision | Alternative considered | Why |
+|---|---|---|
+| Colab as compute | Rented VPS, or the home PC | Free, datacenter bandwidth, native Drive mount, nothing for me to operate. Cost: sessions are time-limited. |
+| User brings their own Telegram keys | One shared app key | Isolates users and avoids a single point of ban; I hold no credentials. Cost: one extra setup step. |
+| Deep link handshake | Local HTTP callback server | No open port on the student's PC. |
+| Cloudflare quick tunnel | ngrok, port forwarding | No account, free TLS; the token supplies authentication. Cost: the URL changes each session. |
+| Parallel range I/O with sequential fallback | Telethon default | Over 10× faster while staying correct on errors. |
+| Serial job queue | Concurrent jobs | Predictable disk use and rate-limit safety, at the cost of total throughput. |
+| Electron | Tauri, native apps | One JavaScript codebase and mature packaging for Windows, macOS and Linux. Cost: larger binary. |
 
-| Failure | Behaviour |
+## 9. Delivery
+
+A GitHub Actions matrix (`.github/workflows/release.yml`) builds on native Windows, Ubuntu and macOS runners from a version tag and publishes:
+
+- **Windows:** installer and portable `.exe`
+- **macOS:** `.dmg` / `.zip` for Intel and Apple Silicon
+- **Linux:** `.AppImage` and `.deb`
+
+together with `SHA256SUMS.txt`. The project is used by my postgraduate diploma cohort.
+
+## 10. Limitations and next steps
+
+| Limitation | Planned direction |
 |---|---|
-| Unreadable Drive entry (FUSE `OSError`, broken link) | Entry skipped; listing still succeeds. |
-| Saved notebook deleted | Load failure detected; a new notebook is opened and remembered. |
-| Colab UI changes break automation | Clipboard-based cell delivery and manual tunnel entry remain available. |
-| Colab VM recycled | Telegram session survives on Drive; the app reconnects to the new tunnel. |
-| Parallel download part fails | Automatic fallback to sequential download. |
-| Archive extraction fails | Original file uploaded instead (no data loss). |
+| Colab free-tier sessions end unpredictably and the in-memory job list is lost | Persist range checkpoints and job history in the user's Drive to resume after a recycle. |
+| Releases are unsigned, so SmartScreen and Gatekeeper warn on first run | Add Authenticode signing and Apple notarisation. |
+| One job at a time | Concurrent jobs with adaptive rate control. |
+| No automated tests | End-to-end tests against a mocked worker API. |
+| Link-host page formats change | Per-platform resolvers are already isolated; yt-dlp updates each session. |
 
 ---
 
-## 9. Build, release and distribution
-
-### 9.1 Pipeline
-
-`.github/workflows/release.yml` defines a three-runner matrix executed in parallel:
-
-```text
-tag vX.Y.Z ─► ┌ windows-latest ─ electron-builder → NSIS + portable .exe ┐
-              ├ ubuntu-latest  ─ electron-builder → AppImage + .deb       ├─► artifacts ─► SHA256SUMS.txt ─► GitHub Release
-              └ macos-latest   ─ electron-builder → .dmg + .zip (x64,arm64)┘
-```
-
-- **Native runners** are required: Apple restricts `.dmg` creation to macOS, and Windows installers are most reliably produced on Windows.
-- `fail-fast: false` isolates platform failures so one OS never blocks the others.
-- The release job runs only for tags and depends on all builds.
-- A manual `workflow_dispatch` trigger produces the same artifacts without publishing.
-
-### 9.2 Artifacts
-
-| OS | Artifacts |
-|---|---|
-| Windows | `LectureSync-Portable-<v>-x64.exe`, `LectureSync Setup <v>.exe` |
-| macOS | `LectureSync-<v>-arm64.dmg`, `LectureSync-<v>-x64.dmg`, matching `.zip` |
-| Linux | `LectureSync-<v>-x86_64.AppImage`, `LectureSync_<v>_amd64.deb` |
-
-### 9.3 Code signing
-
-Current releases are unsigned; Windows SmartScreen and macOS Gatekeeper therefore display first-run warnings. Integrity is provided by the CI-generated SHA-256 manifest. Authenticode signing and Apple notarisation are configuration-only additions to the existing pipeline (certificates supplied as repository secrets).
-
----
-
-## 10. Compliance and responsible use
-
-- **Official interfaces only:** Telegram client API with user-issued keys; Colab's built-in Drive mount.
-- **Resource stewardship:** standard CPU runtime, interactive sessions only, no GPU/TPU use, no persistent or public services, no mining, proxying or peer-to-peer traffic.
-- **Rate-limit respect:** serial job queue and honoured `FloodWait`.
-- **Scope of use:** transfers only content the user is already entitled to access, into the user's own storage.
-
----
-
-## 11. Known limitations
-
-- Colab free-tier idle and maximum-session limits are set by Google and not published as fixed values.
-- Quick-tunnel URLs are ephemeral; rediscovery is automatic but requires the Colab cell to run.
-- Telegram per-file limit: 2 GB (4 GB with Premium).
-- Colab automation depends on Colab's DOM; selectors are isolated to minimise change surface.
-
-## 12. Future work
-
-- Code signing and notarisation for all platforms.
-- Resumable downloads across VM recycling using persisted range checkpoints.
-- Concurrent jobs with adaptive rate control.
-- Automated end-to-end tests against a mocked worker API.
-
----
-
-## 13. Architectural decision records
-
-| # | Decision | Alternatives | Rationale |
-|---|---|---|---|
-| ADR-1 | Colab as compute | Rented VPS; home PC | Free, datacenter bandwidth, native Drive mount, no operator (G1, G2). |
-| ADR-2 | Bring-your-own Telegram keys | One shared application key | Credential isolation, no single point of ban, no custody (G3, I2). |
-| ADR-3 | QR login as primary | SMS code only | SMS blocked for datacenter IPs and unreliable on local carriers. |
-| ADR-4 | System browser for Google sign-in | Spoofed user agent in Electron | BotGuard fingerprints embedded Chromium; spoofing is fragile and contrary to policy. |
-| ADR-5 | Electron | Tauri; native per-OS apps | One JS codebase, mature packaging for three OSes, bundled Chromium. |
-| ADR-6 | Cloudflare quick tunnel | ngrok; port forwarding | No account, no ports, free TLS; token supplies authentication. |
-| ADR-7 | Serial job queue | Unbounded concurrency | Predictable disk use and Telegram rate-limit safety. |
-| ADR-8 | Standalone repository | Monorepo with other projects | Independent versioning, releases and audit; no shared blast radius. |
-
-## Control-plane handshake (v1.1)
-
-**Problem.** The previous design loaded Colab inside an Electron `BrowserWindow` and
-spoofed a Chrome User-Agent. Google's sign-in protection inspects the runtime itself
-(not just the UA) and refuses embedded browsers, so students saw
-*"This browser or app may not be secure."* No amount of spoofing fixes this reliably.
-
-**Design.**
-
-```text
-App ──shell.openExternal──▶ Default browser ──▶ colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb
-                                                   │ Run: mount Drive, fetch worker/server.py,
-                                                   │ start uvicorn + cloudflared, random token
-                                                   ▼
-App ◀──OS protocol handler── lecturesync://connect?url=https://x.trycloudflare.com&token=…
- │  validate URL (trycloudflare only) + token format → user confirms dialog
- └─ GET /disk with token → save (encrypted) → Connected
-```
-
-- **Hosted notebook**: `LectureSync.ipynb` in the repo root; Colab's GitHub integration
-  opens it directly. The worker code is fetched from `worker/server.py` on `main`.
-- **Per-session secret**: the notebook generates a fresh `secrets.token_urlsafe(32)`
-  every run; it only exists in the user's Colab tab and the deep link.
-- **Deep link instead of a loopback server**: no listening socket on the student's
-  PC → no firewall prompt, no antivirus heuristics. Registered via
-  `app.setAsDefaultProtocolClient` + electron-builder `protocols`; delivered through
-  `second-instance` (Windows/Linux) and `open-url` (macOS) with a single-instance lock.
-- **Abuse guard**: any web page can fire a custom-protocol link, so the app accepts only
-  `https://*.trycloudflare.com` URLs, checks the token format, asks the user to confirm,
-  and verifies the worker answers with that token before saving it.
-
-## Project context
-
-A student initiative by a CS Diploma student at FGSSR, Cairo University, for fellow
-students — see [cs-fgssr.pages.dev](https://cs-fgssr.pages.dev/).
+*A free student initiative at FGSSR, Cairo University — [cs-fgssr.pages.dev](https://cs-fgssr.pages.dev/). Licensed under [MIT](LICENSE).*

@@ -73,9 +73,40 @@
       : t.sums;
   }
 
+  // Tabs (app mock + examples)
+  const tabs = (btnSel, paneSel, key) => {
+    const btns = [...document.querySelectorAll(btnSel)], panes = [...document.querySelectorAll(paneSel)];
+    btns.forEach((b) => (b.onclick = () => {
+      const i = +b.dataset[key];
+      btns.forEach((x, j) => x.classList.toggle("on", j === i));
+      panes.forEach((x, j) => x.classList.toggle("on", j === i));
+    }));
+  };
+  tabs(".mtab", ".mpane", "m");
+  tabs(".xtab", ".xpane", "x");
+
+  // Savings calculator
+  const gb = $("#gb"), spd = $("#spd");
+  const fmtT = (s) => (s >= 3600 ? (s / 3600).toFixed(1) + " h" : Math.max(1, Math.round(s / 60)) + " min");
+  const calc = () => {
+    const g = +gb.value, mbps = +spd.value;
+    $("#gbOut").textContent = g;
+    $("#cData").textContent = g * 2 + " GB";
+    $("#cDisk").textContent = g * 2 + " GB";
+    $("#cTime").textContent = fmtT((g * 2 * 1000) / mbps);
+    $("#lTime").textContent = "~" + fmtT((g * 2 * 1000) / 150);
+  };
+  if (gb) { gb.oninput = calc; spd.onchange = calc; calc(); }
+
   applyLang();
   fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
     .then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((j) => { release = j; renderRelease(); })
     .catch(() => { release = false; renderRelease(); });
 })();
+
+// How-it-works route tabs
+document.querySelectorAll(".route").forEach((b) => (b.onclick = () => {
+  document.querySelectorAll(".route").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".flow").forEach((f) => f.classList.toggle("on", f.dataset.r === b.dataset.r));
+}));

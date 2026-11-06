@@ -19,7 +19,7 @@ if (bridgeMissing) {
 }
 const api = ls.api;
 
-let cwd = "";
+let cwd = localStorage.getItem("ls-last-folder") || "";
 let connected = false;
 let signedIn = false;
 const seenDone = new Set();
@@ -41,6 +41,9 @@ const ICONS = {
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
   video: '<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-3v10l-6-3"/>',
+  pause: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
+  stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+  pdf: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 14h8M8 17h5"/>',
   archive: '<rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8M10 12h4"/>',
 };
 const svg = (name, cls = "") =>
@@ -67,11 +70,19 @@ const fmtSize = (b) => {
   return `${b.toFixed(i ? 1 : 0)} ${u[i]}`;
 };
 
-function fileIcon(name) {
-  if (/\.(mp4|mkv|mov|avi|webm)$/i.test(name)) return "video";
-  if (/\.(zip|rar|7z|tar|gz)(\.\d+)?$/i.test(name) || /\.part\d+\.rar$/i.test(name)) return "archive";
+function fileKind(name) {
+  if (/\.(mp4|mkv|mov|avi|webm|m4v|wmv|flv)$/i.test(name)) return "video";
+  if (/\.(zip|rar|7z|tar|gz|tgz|bz2|xz)$/i.test(name) || /\.(\d{3}|z\d{2}|r\d{2})$/i.test(name) || /\.part\d+\.rar$/i.test(name)) return "archive";
+  if (/\.pdf$/i.test(name)) return "pdf";
+  if (/\.(docx?|pptx?|xlsx?|txt|odt|odp|ods|rtf|csv|md|epub)$/i.test(name)) return "doc";
+  if (/\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|wma)$/i.test(name)) return "audio";
+  if (/\.(jpe?g|png|webp|gif|bmp|heic|svg|tiff?)$/i.test(name)) return "image";
   return "file";
 }
+const fileIcon = (name) => { const k = fileKind(name); return ["doc", "audio", "image"].includes(k) ? "file" : k; };
+// "Lec 1.part2.rar" -> "lec 1": used to spot volumes of one split archive.
+const archiveBase = (n) => n.replace(/\.(part\d+\.rar|\d{3}|z\d{2}|r\d{2})$/i, "").replace(/\.(zip|rar|7z)$/i, "").toLowerCase();
+const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); } catch { return ""; } };
 
 let toastTimer;
 function toast(text, isError = false) {
@@ -115,6 +126,8 @@ function setStep(n, state) {
   const s = $("step" + n);
   s.classList.remove("active", "complete", "locked");
   if (state) s.classList.add(state);
+  const p = $("prog" + n);
+  if (p) { p.classList.remove("active", "complete", "locked"); if (state) p.classList.add(state); }
 }
 
 async function renderSetup() {
@@ -126,17 +139,22 @@ async function renderSetup() {
   setStep(2, !hasKeys ? "locked" : connected ? "complete" : "active");
   setStep(3, !connected ? "locked" : signedIn ? "complete" : "active");
   $("startColab").disabled = !hasKeys;
-  $("tgLogin").classList.toggle("hidden", !(connected && !signedIn));
+  const needQr = connected && !signedIn;
+  $("tgLogin").classList.toggle("hidden", !needQr);
+  // Show the code right away instead of waiting for a click.
+  if (needQr && !qrTimer && !qrBusy && $("qrPwBox").classList.contains("hidden")) guard(startQr);
+  if (!needQr) stopQr();
 
   const ready = connected && signedIn;
   $("onboarding").classList.toggle("hidden", ready);
   $("workspace").classList.toggle("hidden", !ready);
+  $("modeBar").classList.toggle("hidden", !ready);
   return hasKeys;
 }
 
 const STAGES = {
-  browser: "Colab opened in your browser. Press Run ▶, allow Google Drive, then click the green \"Connect to LectureSync\" button that appears.",
-  linking: "Connecting to your Colab engine…",
+  browser: "Waiting for the engine in your browser…",
+  linking: "Linking to your cloud engine…",
   external: "",
 };
 ls.onStage((stage) => {
@@ -161,7 +179,8 @@ async function refreshStatus() {
     signedIn = Boolean(h.telegram);
     setStatus(signedIn ? "Connected" : "Connected · Telegram sign-in needed", signedIn ? "on" : "wait");
     $("disk").classList.remove("hidden");
-    $("diskText").textContent = `Colab disk · ${fmtSize(d.free)} free of ${fmtSize(d.total)}`;
+    $("diskText").textContent = `Colab disk · ${fmtSize(d.free)} free of ${fmtSize(d.total)}` +
+      (d.drive ? ` · Drive · ${fmtSize(d.drive.free)} free` : "");
     $("diskFill").style.width = `${Math.round((d.used / d.total) * 100)}%`;
     return h;
   } catch {
@@ -179,32 +198,150 @@ async function loadChats() {
   const chats = await api("GET", "/telegram/chats");
   const prev = $("chat").value;
   $("chat").replaceChildren(...chats.map((c) => el("option", { value: c.id, textContent: c.title })));
-  if (prev && chats.some((c) => String(c.id) === prev)) $("chat").value = prev;
+  const want = prev || localStorage.getItem("ls-last-chat");
+  if (want && chats.some((c) => String(c.id) === want)) $("chat").value = want;
   if (chats.length) await loadTgFiles();
 }
+
+let tgList = [];
+const selected = new Map(); // message id -> file
+let kind = "all";
 
 async function loadTgFiles() {
   const chatId = $("chat").value;
   if (!chatId) return;
+  localStorage.setItem("ls-last-chat", chatId);
   const q = tgQuery.trim();
   const files = await api("GET", `/telegram/files?chat_id=${chatId}${q ? `&q=${encodeURIComponent(q)}&limit=200` : ""}`);
+  tgList = files;
+  selected.clear();
+  renderTgFiles(chatId);
+}
+
+function renderTgFiles(chatId) {
+  const files = tgList;
   $("tgEmpty").classList.toggle("hidden", files.length > 0);
   $("tgFiles").replaceChildren(...files.map((f) => {
-    const send = el("button", { className: "primary small", textContent: "Send to Drive" });
-    send.onclick = () => guard(async () => {
-      const where = "/" + (cwd || "My Drive");
-      if ((await ask(`Extract "${f.name}" into ${where}?`, null)) === null) return;
-      await api("POST", "/jobs", { chat_id: Number(chatId), message_id: f.id, dest: cwd });
-      toast("Added to jobs.");
-      loadJobs();
-    });
-    return el("li", {},
-      icon(fileIcon(f.name)),
-      el("span", { className: "name", textContent: f.name, title: f.name }),
+    const pick = el("input", { type: "checkbox", className: "pick", title: "Select" });
+    pick.checked = selected.has(f.id);
+    pick.onchange = () => { pick.checked ? selected.set(f.id, f) : selected.delete(f.id); renderSel(); };
+    const send = el("button", { className: "primary small", textContent: "Send", title: "Send to Google Drive" });
+    send.onclick = () => guard(() => sendFiles(Number(chatId), [f]));
+    const sub = [fmtDate(f.date), f.caption].filter(Boolean).join(" · ");
+    const li = el("li", { className: "kind-" + fileKind(f.name) },
+      pick, icon(fileIcon(f.name)),
+      el("div", { className: "info" },
+        el("span", { className: "name", textContent: f.name, title: f.name }),
+        sub ? el("span", { className: "sub", textContent: sub, title: f.caption || "" }) : ""),
+      f.caption ? copyBtn(f.caption) : "",
       el("span", { className: "meta", textContent: fmtSize(f.size) }),
       send);
+    li.dataset.kind = fileKind(f.name);
+    return li;
   }));
+  applyKind();
+  renderSel();
   if (!tgQuery) filterList("tgFiles", $("tgSearch").value);
+}
+
+function copyBtn(text) {
+  const b = el("button", { className: "ghost small copy-cap", textContent: "Copy caption", title: "Copy this file's description text (not the file itself)" });
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(text); toast("Description copied."); }
+    catch { toast("Couldn't copy. Select the text and press Ctrl+C.", true); }
+  };
+  return b;
+}
+
+// Draggable column splitters; widths are remembered.
+(function initSplitters() {
+  const ws = $("workspace");
+  const saved = JSON.parse(localStorage.getItem("ls-cols") || "null");
+  const apply = (c) => c.forEach((v, i) => ws.style.setProperty(`--c${i + 1}`, v + "fr"));
+  if (Array.isArray(saved) && saved.length === 3) apply(saved);
+  for (const sp of ws.querySelectorAll(".splitter")) {
+    sp.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const panes = [...ws.querySelectorAll(":scope > .pane")];
+      const w = panes.map((p) => p.getBoundingClientRect().width);
+      const i = Number(sp.dataset.split), x0 = e.clientX, min = 220;
+      const pair = w[i] + w[i + 1];
+      sp.setPointerCapture(e.pointerId);
+      sp.classList.add("dragging"); document.body.classList.add("resizing");
+      const move = (ev) => {
+        const a = Math.max(min, Math.min(pair - min, w[i] + ev.clientX - x0));
+        const c = [...w]; c[i] = a; c[i + 1] = pair - a;
+        apply(c); localStorage.setItem("ls-cols", JSON.stringify(c));
+      };
+      const up = () => {
+        sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up);
+        sp.classList.remove("dragging"); document.body.classList.remove("resizing");
+      };
+      sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up);
+    });
+    sp.addEventListener("dblclick", () => { localStorage.removeItem("ls-cols"); ["--c1","--c2","--c3"].forEach((k) => ws.style.removeProperty(k)); });
+  }
+})();
+
+function applyKind() {
+  for (const li of $("tgFiles").children) li.classList.toggle("kind-out", kind !== "all" && li.dataset.kind !== kind);
+}
+
+function renderSel() {
+  $("selBar").classList.toggle("hidden", selected.size === 0);
+  const total = [...selected.values()].reduce((a, f) => a + f.size, 0);
+  $("selCount").textContent = `${selected.size} selected · ${fmtSize(total)}`;
+}
+
+// Opens the options dialog, then queues one job (or one per file).
+function sendDialog(files) {
+  return new Promise((resolve) => {
+    const d = $("sendDlg");
+    const where = "/" + (cwd || "My Drive");
+    const archives = files.filter((f) => fileKind(f.name) === "archive");
+    const sameBase = archives.length > 1 && archives.length === files.length &&
+      new Set(archives.map((f) => archiveBase(f.name))).size === 1;
+    $("sendWhat").textContent = files.length === 1
+      ? `"${files[0].name}" (${fmtSize(files[0].size)}) → ${where}`
+      : `${files.length} files (${fmtSize(files.reduce((a, f) => a + f.size, 0))}) → ${where}`;
+    $("renameBox").classList.toggle("hidden", files.length !== 1);
+    $("sendRename").value = files.length === 1 ? files[0].name : "";
+    $("archiveOpts").classList.toggle("hidden", archives.length === 0);
+    $("multiBox").classList.toggle("hidden", archives.length < 2);
+    $("sendMulti").checked = sameBase;
+    $("sendExtract").checked = true;
+    $("sendSub").checked = false;
+    $("sendPw").value = "";
+    d.onclose = () => resolve(d.returnValue === "ok" ? {
+      rename: $("sendRename").value.trim(),
+      extract: $("sendExtract").checked,
+      multi: $("sendMulti").checked && archives.length > 1,
+      subfolder: $("sendSub").checked,
+      password: $("sendPw").value || null,
+    } : null);
+    d.returnValue = "";
+    d.showModal();
+  });
+}
+
+async function sendFiles(chatId, files) {
+  const o = await sendDialog(files);
+  if (!o) return false;
+  const base = { chat_id: chatId, dest: cwd, extract: o.extract, subfolder: o.subfolder, password: o.password };
+  if (o.multi) {
+    // Volumes in name order so part1 / .001 goes first; 7z picks up the rest from the same folder.
+    const ordered = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    await api("POST", "/jobs", { ...base, message_id: ordered[0].id, extra_ids: ordered.slice(1).map((f) => f.id) });
+  } else {
+    for (const f of files) {
+      const rename = files.length === 1 && o.rename && o.rename !== f.name ? o.rename : null;
+      await api("POST", "/jobs", { ...base, message_id: f.id, rename });
+    }
+  }
+  toast(files.length === 1 || o.multi ? "Added to jobs." : `Added ${files.length} jobs.`);
+  loadJobs();
+  return true;
 }
 
 // ------------------------------------------------ drive
@@ -220,13 +357,23 @@ function renderCrumb() {
 }
 
 async function loadDrive(path = cwd) {
-  const res = await api("GET", `/drive/list?path=${encodeURIComponent(path)}`);
+  let res;
+  try {
+    res = await api("GET", `/drive/list?path=${encodeURIComponent(path)}`);
+  } catch (e) {
+    if (!path) throw e;
+    res = await api("GET", "/drive/list?path="); // remembered folder no longer exists
+  }
   cwd = res.path;
+  linkDriveNote();
+  localStorage.setItem("ls-last-folder", cwd);
   renderCrumb();
   $("driveWarn").classList.toggle("hidden", res.mounted !== false);
   $("driveEmpty").classList.toggle("hidden", res.items.length > 0);
-  $("driveList").replaceChildren(...res.items.map((it) => {
-    const full = cwd ? `${cwd}/${it.name}` : it.name;
+  driveSel.clear();
+  driveItems = res.items.map((it) => ({ ...it, full: cwd ? `${cwd}/${it.name}` : it.name }));
+  $("driveList").replaceChildren(...driveItems.map((it) => {
+    const full = it.full;
     const name = el("span", { className: "name", textContent: it.name, title: it.name });
     if (it.dir) name.onclick = () => guard(() => loadDrive(full));
 
@@ -250,12 +397,214 @@ async function loadDrive(path = cwd) {
       loadDrive();
     });
 
-    return el("li", { className: it.dir ? "dir" : "" },
-      icon(it.dir ? "folder" : fileIcon(it.name)), name,
-      el("span", { className: "meta", textContent: fmtSize(it.size) }),
+    const pick = el("input", { type: "checkbox", className: "pick", title: "Select to send to Telegram" });
+    const li = el("li", { className: it.dir ? "dir" : "" },
+      pick, icon(it.dir ? "folder" : fileIcon(it.name)), name,
+      el("span", { className: "meta", textContent: it.dir ? "folder" : fmtSize(it.size) }),
       el("span", { className: "actions" }, ren, del));
+    pick.onchange = () => {
+      pick.checked ? driveSel.set(full, it) : driveSel.delete(full);
+      li.classList.toggle("picked", pick.checked);
+      renderDriveSel();
+    };
+    return li;
   }));
+  renderDriveSel();
   filterList("driveList", $("driveSearch").value);
+}
+
+// ------------------------------------------------ direction mode + drive selection
+
+let driveItems = [];
+const driveSel = new Map(); // Drive path -> item
+let mode = ["drive2tg", "link"].includes(localStorage.getItem("ls-mode")) ? localStorage.getItem("ls-mode") : "tg2drive";
+
+function renderDriveSel() {
+  const on = mode === "drive2tg" && driveSel.size > 0;
+  $("driveSelBar").classList.toggle("hidden", mode !== "drive2tg");
+  const files = [...driveSel.values()];
+  const total = files.filter((f) => !f.dir).reduce((a, f) => a + (f.size || 0), 0);
+  const dirs = files.filter((f) => f.dir).length;
+  $("driveSelCount").textContent = driveSel.size
+    ? `${driveSel.size} selected · ${fmtSize(total)}${dirs ? ` + ${dirs} folder${dirs > 1 ? "s" : ""}` : ""}`
+    : "Tick files or folders to send";
+  $("driveSelSend").disabled = !on;
+  $("driveSelClear").disabled = !driveSel.size;
+}
+
+function setMode(m) {
+  mode = m;
+  localStorage.setItem("ls-mode", m);
+  document.body.classList.toggle("d2t", m === "drive2tg");
+  // Source pane always on the left: Drive first when sending Drive -> Telegram.
+  const ws = $("workspace"), tg = $("tgPane"), dr = $("drivePane"), sp0 = ws.querySelector('[data-split="0"]');
+  const [first, second] = m === "drive2tg" ? [dr, tg] : [tg, dr];
+  ws.insertBefore(first, ws.firstChild);
+  ws.insertBefore(sp0, first.nextSibling);
+  ws.insertBefore(second, sp0.nextSibling);
+  for (const b of document.querySelectorAll("#modeBar .mode")) b.classList.toggle("on", b.dataset.mode === m);
+  $("d2tInfo").classList.toggle("hidden", m !== "drive2tg");
+  $("t2dBody").classList.toggle("hidden", m !== "tg2drive");
+  $("linkBody").classList.toggle("hidden", m !== "link");
+  $("driveHint").textContent = m === "drive2tg"
+    ? "Tick files or folders, then press Send to Telegram."
+    : m === "link" ? "Files from links go into the folder you're looking at."
+    : "Files from Telegram go into the folder you're looking at.";
+  linkDriveNote();
+  if (m !== "drive2tg") {
+    driveSel.clear();
+    for (const li of $("driveList").children) li.classList.remove("picked");
+    for (const c of $("driveList").querySelectorAll(".pick")) c.checked = false;
+  }
+  renderDriveSel();
+}
+
+// ------------------------------------------------ drive -> telegram
+
+// Searchable chat picker with suggestions; any @username or t.me link is accepted too.
+function setupTargetCombo(targets) {
+  const input = $("tgTargetSearch"), list = $("tgTargetList"), err = $("tgTargetErr");
+  const icons = { saved: "⭐", user: "👤", group: "👥", channel: "📢" };
+  const groups = [["saved", "Saved"], ["user", "People"], ["group", "Groups"], ["channel", "Channels"]];
+  let chosen = targets.find((t) => t.id === "me") || null;
+  let active = -1, rows = [];
+  input.value = chosen ? `${icons.saved} ${chosen.title}` : "";
+  err.classList.add("hidden");
+
+  const render = () => {
+    const q = input.value.replace(/^[⭐👤👥📢]\s*/u, "").trim().toLowerCase().replace(/^@/, "");
+    const match = (t) => !q || t.title.toLowerCase().includes(q) || (t.username || "").toLowerCase().includes(q) || t.id === q;
+    const items = [];
+    const typed = input.value.trim();
+    if (q && (/^@?\w{4,}$/.test(typed) || typed.includes("t.me/")) && !targets.some((t) => (t.username || "").toLowerCase() === q))
+      items.push({ id: typed.startsWith("@") || typed.includes("t.me/") ? typed : "@" + typed, title: typed.includes("t.me/") ? typed : "@" + typed.replace(/^@/, ""), type: "manual" });
+    for (const [type, label] of groups) {
+      const g = targets.filter((t) => t.type === type && match(t)).slice(0, q ? 50 : 8);
+      if (g.length) items.push({ header: label }, ...g);
+    }
+    rows = items.filter((i) => !i.header);
+    active = rows.length ? 0 : -1;
+    list.replaceChildren(...items.map((it) => {
+      if (it.header) return el("li", { className: "group-h", textContent: it.header });
+      const li = el("li", { role: "option" },
+        el("span", { textContent: it.type === "manual" ? "➜" : icons[it.type] || "" }),
+        el("span", { className: "name", textContent: it.type === "manual" ? `Send to ${it.title}` : it.title }),
+        it.username ? el("span", { className: "sub", textContent: "@" + it.username }) : "");
+      li.onmousedown = (e) => { e.preventDefault(); pick(it); };
+      it._li = li;
+      return li;
+    }));
+    if (!items.length) list.replaceChildren(el("li", { className: "group-h", textContent: "No match — type a full @username" }));
+    highlight();
+    list.classList.remove("hidden");
+  };
+  const highlight = () => rows.forEach((r, i) => r._li.classList.toggle("active", i === active));
+  const pick = (it) => {
+    chosen = it; err.classList.add("hidden");
+    input.value = it.type === "manual" ? it.title : `${icons[it.type] || ""} ${it.title}`;
+    list.classList.add("hidden");
+  };
+  input.onfocus = () => { input.select(); render(); };
+  input.oninput = () => { chosen = null; err.classList.add("hidden"); render(); };
+  // Clicking or dragging the list's scrollbar must not steal focus from the box.
+  list.onmousedown = (e) => e.preventDefault();
+  input.onblur = () => setTimeout(() => { if (document.activeElement !== input) list.classList.add("hidden"); }, 150);
+  input.onkeydown = (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); if (list.classList.contains("hidden")) render();
+      if (rows.length) { active = (active + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length; highlight(); rows[active]._li.scrollIntoView({ block: "nearest" }); }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!list.classList.contains("hidden") && rows[active]) pick(rows[active]);
+    } else if (e.key === "Escape" && !list.classList.contains("hidden")) {
+      e.preventDefault(); e.stopPropagation(); list.classList.add("hidden");
+    }
+  };
+  return {
+    value: () => {
+      if (chosen) return chosen;
+      const t = input.value.trim();
+      return t ? { id: t, title: t } : null;
+    },
+    error: (m) => { err.textContent = "⚠ " + String(m).replace(/^.*?Error: /, ""); err.classList.remove("hidden"); },
+  };
+}
+
+let tgTargets = null;
+async function sendToTelegram(items) {
+  if (!items.length) return;
+  // Size check first: Telegram caps one file at 2 GB (4 GB with Premium).
+  const checks = [];
+  for (const it of items) checks.push({ it, check: await api("POST", "/drive/check-upload", { path: it.full }) });
+  if (!tgTargets) tgTargets = await api("GET", "/telegram/targets");
+  const combo = setupTargetCombo(tgTargets);
+  $("tgCaption").value = "";
+  const hasDir = checks.some((c) => c.check.is_dir);
+  const total = checks.reduce((a, c) => a + c.check.size, 0);
+  const { limit, premium } = checks[0].check;
+  $("tgSendWhat").textContent = items.length === 1
+    ? `"${items[0].name}"${hasDir ? ` — folder, ${checks[0].check.file_count} files` : ""} (${fmtSize(total)})`
+    : `${items.length} items (${fmtSize(total)})`;
+  const skipped = checks.reduce((a, c) => a + (c.check.skipped || 0), 0);
+  if (skipped) $("tgSendWhat").textContent += ` — ${skipped} Google Docs/Sheets/Slides file(s) will be skipped (cloud-only; export them as PDF/Office first)`;
+  $("tgFolderOpts").classList.toggle("hidden", !hasDir);
+  document.querySelector('input[name="tgFolderMode"][value="archive"]').checked = true;
+  const note = () => {
+    const fm = document.querySelector('input[name="tgFolderMode"]:checked').value;
+    const big = checks.some(({ check: c }) => (c.is_dir && fm === "batch" ? c.batch_needs_split : c.needs_split));
+    $("tgSizeNote").textContent = big
+      ? `⚠ Something is bigger than Telegram's ${fmtSize(limit)} limit for your account — you'll be asked before it's split.`
+      : `Fits without splitting (your limit: ${fmtSize(limit)} per file${premium ? ", Premium" : ""}).`;
+  };
+  for (const r of document.querySelectorAll('input[name="tgFolderMode"]')) r.onchange = note;
+  note();
+
+  const d = $("tgSendDlg");
+  const okBtn = d.querySelector('button[value="ok"]');
+  let target = "", title = "";
+  okBtn.onclick = async (ev) => {
+    ev.preventDefault();
+    const pick = combo.value();
+    if (!pick) { combo.error("Choose a chat from the list or type a @username."); return; }
+    okBtn.disabled = true;
+    try {
+      const r = await api("POST", "/telegram/check-target", { target: pick.id });
+      target = pick.id; title = pick.title || r.title;
+      d.close("ok");
+    } catch (e) {
+      combo.error(e.message || String(e));
+    } finally { okBtn.disabled = false; }
+  };
+  const ok = await new Promise((resolve) => {
+    d.onclose = () => resolve(d.returnValue === "ok");
+    d.returnValue = "";
+    d.showModal();
+  });
+  if (!ok) return false;
+  const folderMode = document.querySelector('input[name="tgFolderMode"]:checked').value;
+  const caption = $("tgCaption").value.trim();
+
+  // Ask once for everything that needs splitting, with the approximate part counts.
+  const oversized = checks.filter(({ check: c }) => (c.is_dir && folderMode === "batch" ? c.batch_needs_split : c.needs_split));
+  let split = false;
+  if (oversized.length) {
+    const lines = oversized.map(({ it, check: c }) => c.is_dir && folderMode === "batch"
+      ? `• ${it.name}/ — ${c.batch_oversized} file(s) inside are too big and will be split`
+      : `• ${it.name} (${fmtSize(c.size)}) → about ${c.parts} parts`).join("\n");
+    const yes = await ask(
+      `Over Telegram's ${fmtSize(limit)} limit for your account:\n${lines}\n\n` +
+      `Split them into parts (Part 1, Part 2 …, .7z.001, .002) and send them one after another? ` +
+      `To rebuild later, put all parts in one folder and open part 1 with 7-Zip.`, null);
+    if (yes === null) { toast("Nothing was sent."); return false; }
+    split = true;
+  }
+  for (const { it, check: c } of checks) {
+    const needs = c.is_dir && folderMode === "batch" ? c.batch_needs_split : c.needs_split;
+    await api("POST", "/uploads", { path: it.full, target, split: split && needs, caption, target_title: title, mode: folderMode });
+  }
+  toast(items.length === 1 ? `Added: → ${title}` : `Added ${items.length} jobs → ${title}`);
+  loadJobs();
+  return true;
 }
 
 // Instant name filter on whatever list is showing.
@@ -267,38 +616,198 @@ function filterList(id, text) {
   }
 }
 
+// ------------------------------------------------ link -> drive / telegram
+
+const PLATFORM_NAME = {
+  sharepoint: "🟦 SharePoint / OneDrive", gdrive: "📁 Google Drive", dropbox: "🗃 Dropbox",
+  mediafire: "🔥 MediaFire", youtube: "🔴 YouTube / video site", direct: "🔗 Direct link",
+};
+let linkChecked = null;
+
+function linkDriveNote() {
+  const n = $("linkDriveNote");
+  if (n) n.textContent = `Saved into: /${cwd || "My Drive"} (open another folder on the right to change it)`;
+}
+
+function linkTo() { return document.querySelector('input[name="linkTo"]:checked').value; }
+
+async function checkLink() {
+  const url = $("linkUrl").value.trim();
+  if (!url) return;
+  $("linkOpts").classList.add("hidden");
+  $("linkInfo").classList.remove("hidden");
+  $("linkInfo").textContent = "Checking the link…";
+  try {
+    const r = await api("POST", "/links/inspect", { url });
+    linkChecked = { url, ...r };
+    const what = r.playlist ? `Playlist "${r.title}" — ${r.count} videos` : (r.title || "File") + (r.size ? ` · ${fmtSize(r.size)}` : "");
+    $("linkInfo").textContent = `${PLATFORM_NAME[r.platform] || r.platform} · ${what}`;
+    $("linkQualityRow").classList.toggle("hidden", !r.quality);
+    $("linkBundleRow").classList.toggle("hidden", !r.playlist);
+    document.querySelector('input[name="linkBundle"][value="0"]').checked = true;
+    $("linkOpts").classList.remove("hidden");
+    linkDriveNote();
+  } catch (e) {
+    linkChecked = null;
+    $("linkInfo").textContent = "⚠ " + String(e.message || e).replace(/^.*?Error: /, "");
+  }
+}
+
+async function loadLinkTargets() {
+  if (!tgTargets) tgTargets = await api("GET", "/telegram/targets");
+  const icons = { saved: "⭐", user: "👤", group: "👥", channel: "📢" };
+  $("linkTarget").replaceChildren(...tgTargets.map((t) =>
+    el("option", { value: t.id, textContent: `${icons[t.type] || ""} ${t.title}` })));
+}
+
+$("linkCheck").onclick = () => guard(checkLink);
+$("linkUrl").onkeydown = (e) => { if (e.key === "Enter") guard(checkLink); };
+$("linkUrl").onpaste = () => setTimeout(() => guard(checkLink), 0);
+for (const r of document.querySelectorAll('input[name="linkTo"]')) r.onchange = () => guard(async () => {
+  const tg = linkTo() === "telegram";
+  $("linkTargetRow").classList.toggle("hidden", !tg);
+  $("linkDriveNote").classList.toggle("hidden", tg);
+  if (tg) await loadLinkTargets();
+});
+$("linkStart").onclick = () => guard(async () => {
+  if (!linkChecked || linkChecked.url !== $("linkUrl").value.trim()) await checkLink();
+  if (!linkChecked) return;
+  const to = linkTo();
+  const sel = $("linkTarget");
+  const body = {
+    url: linkChecked.url, to, dest: cwd, quality: $("linkQuality").value, compress: $("linkCompress").checked,
+    bundle: !!linkChecked.playlist && document.querySelector('input[name="linkBundle"]:checked').value === "1",
+    target: to === "telegram" ? sel.value : "",
+    target_title: to === "telegram" && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.trim() : "",
+  };
+  await api("POST", "/links", body);
+  toast(!linkChecked.playlist ? "Added to jobs"
+    : body.bundle ? `Playlist added — ${linkChecked.count} videos into one archive`
+    : `Playlist added — ${linkChecked.count} videos, one at a time`);
+  $("linkUrl").value = ""; linkChecked = null;
+  $("linkOpts").classList.add("hidden"); $("linkInfo").classList.add("hidden");
+  loadJobs();
+});
+
 // ------------------------------------------------ jobs
 
 const STATE_LABEL = {
   queued: "Waiting in line",
+  paused: "Paused",
   downloading: "Downloading from Telegram",
   extracting: "Extracting",
   uploading: "Moving into Drive",
+  splitting: "Splitting into parts",
+  zipping: "Zipping the folder",
+  sending: "Sending to Telegram",
+  preparing: "Reading the link",
+  compressing: "Compressing (7-Zip)",
+  "packing archive": "Packing playlist into one archive",
+  "compressing video": "Compressing video",
   done: "Done",
   failed: "Failed",
+  cancelled: "Stopped",
 };
+const FINISHED = ["done", "failed", "cancelled"];
+
+function chime() {
+  if (localStorage.getItem("ls-sound") === "off") return;
+  try {
+    const ctx = new AudioContext();
+    [660, 880].forEach((hz, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = hz;
+      const t = ctx.currentTime + i * 0.18;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(g).connect(ctx.destination);
+      o.start(t); o.stop(t + 0.55);
+    });
+    setTimeout(() => ctx.close(), 1200);
+  } catch { /* no audio device */ }
+}
+
+const getHistory = () => { try { return JSON.parse(localStorage.getItem("ls-history") || "[]"); } catch { return []; } };
+function addHistory(j) {
+  const h = getHistory();
+  if (h.some((x) => x.id === j.id)) return;
+  h.unshift({ id: j.id, name: j.rename || j.name || "file", size: j.size, dest: j.dest, at: Date.now() });
+  localStorage.setItem("ls-history", JSON.stringify(h.slice(0, 300)));
+}
+
+function jobButton(label, iconName, cls, fn) {
+  const b = el("button", { className: `ghost small ${cls}`, textContent: label });
+  if (iconName) b.prepend(icon(iconName));
+  b.onclick = () => guard(async () => { await fn(); loadJobs(); });
+  return b;
+}
 
 async function loadJobs() {
   const jobs = await api("GET", "/jobs");
   $("jobsEmpty").classList.toggle("hidden", jobs.length > 0);
+  $("clearJobs").disabled = !jobs.some((j) => FINISHED.includes(j.state));
   $("jobs").replaceChildren(...jobs.map((j) => {
     if (j.state === "done" && !seenDone.has(j.id)) {
       seenDone.add(j.id);
-      ls.notify("Lecture Sync", `Finished → /${j.dest || "My Drive"}`);
-      if (j.dest === cwd) loadDrive();
+      addHistory(j);
+      ls.notify("Lecture Sync", j.kind === "upload" || (j.kind === "link" && j.to === "telegram") ? `Sent → ${j.dest}` : `Finished → /${j.dest || "My Drive"}`);
+      chime();
+      if (j.kind !== "upload" && !(j.kind === "link" && j.to === "telegram") && j.dest === cwd) loadDrive();
     }
+    const state = j.paused && !FINISHED.includes(j.state) ? "paused" : j.state;
     const fill = el("i");
     fill.style.width = `${Math.round(j.progress * 100)}%`;
-    const pct = j.state === "done" ? "" : ` · ${Math.round(j.progress * 100)}%`;
-    const speed = j.state === "downloading" && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
-    const label = j.error || STATE_LABEL[j.state] || j.state;
-    return el("li", { className: `job ${j.state}` },
+    const pct = FINISHED.includes(state) || state === "queued" ? "" : ` · ${Math.round(j.progress * 100)}%`;
+    const speed = (/^downloading/.test(state) || /^sending/.test(state)) && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
+    const label = (j.state === "failed" && j.error) || STATE_LABEL[state] ||
+      state.replace(/^downloading (\d+\/\d+)/, "Downloading · item $1").replace(/^sending part/, "Sending to Telegram · part").replace(/^sending file/, "Sending to Telegram · file");
+    const opts = [
+      j.extra_ids && j.extra_ids.length ? `${j.extra_ids.length + 1} parts` : "",
+      j.kind === "upload" && j.parts > 1 ? `${j.parts} parts` : "",
+      j.extract === false ? "kept compressed" : "",
+      j.has_password ? "password" : "",
+      j.kind === "link" ? (PLATFORM_NAME[j.platform] || "link") : "",
+      j.kind === "link" && j.platform === "youtube" ? (j.quality === "audio" ? "audio only" : j.quality + "p") : "",
+      j.kind === "link" && j.compress ? "compressed" : "",
+      j.kind === "link" && j.parts > 1 ? `${j.parts} videos` : "",
+      j.state === "done" && j.error ? j.error : "",
+    ].filter(Boolean).join(" · ");
+    const title = (j.rename || j.name || "Preparing…") + (j.size ? ` · ${fmtSize(j.size)}` : "");
+
+    const actions = [];
+    if (!FINISHED.includes(j.state)) {
+      if (j.paused) actions.push(jobButton("Resume", "play", "", () => api("POST", `/jobs/${j.id}/resume`)));
+      else if (["queued", "downloading"].includes(j.state) || /^(waiting|downloading)/.test(j.state))
+        actions.push(jobButton("Pause", "pause", "", () => api("POST", `/jobs/${j.id}/pause`)));
+      actions.push(jobButton("Stop", "stop", "danger", async () => {
+        if ((await ask("Stop this transfer? What was downloaded so far is deleted.", null)) === null) return;
+        await api("POST", `/jobs/${j.id}/cancel`);
+      }));
+    } else if (j.state !== "done") {
+      actions.push(jobButton("Retry", "refresh", "", () => api("POST", `/jobs/${j.id}/retry`)));
+    }
+
+    return el("li", { className: `job ${state}` },
       el("div", { className: "job-top" },
-        el("span", { className: "job-name", textContent: "→ /" + (j.dest || "My Drive") }),
+        el("span", { className: "job-name", textContent: title, title }),
         el("span", { className: "meta", textContent: "#" + j.id })),
-      el("div", { className: "job-state", textContent: label + (j.error ? "" : pct + speed) }),
-      el("div", { className: "bar" }, fill));
+      el("div", { className: "job-state", textContent: (j.kind === "upload" ? "→ Telegram: " + j.dest : "→ /" + (j.dest || "My Drive")) + (opts ? ` · ${opts}` : "") }),
+      el("div", { className: "job-state", textContent: label + (j.state === "failed" ? "" : pct + speed) }),
+      el("div", { className: "bar" }, fill),
+      actions.length ? el("div", { className: "job-actions" }, ...actions) : "");
   }));
+}
+
+function renderHistory() {
+  const h = getHistory();
+  $("historyEmpty").classList.toggle("hidden", h.length > 0);
+  $("historyList").replaceChildren(...h.map((x) => el("li", {},
+    icon(fileIcon(x.name)),
+    el("div", { className: "info" },
+      el("span", { className: "name", textContent: x.name, title: x.name }),
+      el("span", { className: "sub", textContent: `→ /${x.dest || "My Drive"} · ${new Date(x.at).toLocaleString()}` })),
+    el("span", { className: "meta", textContent: fmtSize(x.size) }))));
 }
 
 // ------------------------------------------------ buttons
@@ -308,6 +817,7 @@ $("enterKeys").onclick = $("openSettings").onclick = async () => {
   const c = await ls.getConfig();
   $("apiId").value = c.apiId || "";
   $("apiHash").value = "";
+  $("soundOn").checked = localStorage.getItem("ls-sound") !== "off";
   $("apiHash").placeholder = c.hasApiHash ? "saved - leave empty to keep it" : "32 characters";
   $("settings").showModal();
 };
@@ -323,12 +833,22 @@ $("saveKeys").onclick = () => guard(async () => {
   toast("Telegram keys saved.");
   boot();
 });
+$("soundOn").onchange = (e) => {
+  localStorage.setItem("ls-sound", e.target.checked ? "on" : "off");
+  if (e.target.checked) chime();
+};
 $("openAbout").onclick = async () => {
   $("about").showModal();
 };
 $("startColab").onclick = () => guard(ls.startColab);
 $("startColabExternal").onclick = () => guard(ls.startColabExternal);
 $("copyAgainExt").onclick = () => { ls.copyCell(); toast("Copied."); };
+$("toggleManual").onclick = (e) => {
+  e.preventDefault();
+  const box = $("manualBox");
+  box.classList.toggle("hidden");
+  if (!box.classList.contains("hidden")) $("manualUrl").focus();
+};
 $("manualConnect").onclick = () => guard(async () => {
   await ls.setUrl($("manualUrl").value.trim());
   boot();
@@ -347,14 +867,21 @@ $("toggleTheme").onclick = () => {
 };
 
 // ------------------------------------------------ telegram QR login
-let qrTimer = null, qrRefresh = null;
-const stopQr = () => { clearInterval(qrTimer); clearTimeout(qrRefresh); qrTimer = qrRefresh = null; };
+var qrTimer = null, qrRefresh = null, qrBusy = false;
+function stopQr() { clearInterval(qrTimer); clearTimeout(qrRefresh); qrTimer = qrRefresh = null; }
 async function startQr() {
+  if (qrBusy) return;
+  qrBusy = true;
   stopQr();
   $("qrState").textContent = "Preparing code…";
-  const r = await api("POST", "/telegram/qr/start");
+  $("qrImg").innerHTML = '<span class="qr-spin" aria-label="Loading"></span>';
+  let r;
+  try { r = await api("POST", "/telegram/qr/start"); }
+  catch (e) { $("qrImg").innerHTML = '<span class="muted small">Couldn\'t load the code</span>'; $("qrState").textContent = ""; $("qrStart").textContent = "Try again"; throw e; }
+  finally { qrBusy = false; }
   if (r.state === "done") return qrDone();
-  $("qrImg").innerHTML = r.svg;
+  $("qrImg").innerHTML = String(r.svg || "").replace(/^<\?xml[^>]*>\s*/, "");
+  $("qrStart").textContent = "New code";
   $("qrState").textContent = "Waiting for you to scan…";
   // Telegram codes expire after ~30s; fetch a fresh one shortly before.
   const ms = Math.max(5000, r.expires * 1000 - Date.now() - 3000);
@@ -366,6 +893,7 @@ async function startQr() {
     else if (s.state === "password") {
       stopQr(); $("qrPwBox").classList.remove("hidden");
       $("qrState").textContent = "Scanned. Your account has a two-step password, type it below.";
+    } else if (s.state === "expired") { guard(startQr);
     } else if (s.state === "error") { stopQr(); $("qrState").textContent = "Error: " + (s.error || "try again"); }
   }, 2000);
 }
@@ -408,9 +936,47 @@ $("tgSearch").oninput = (e) => {
 $("tgSearch").onkeydown = (e) => {
   if (e.key === "Enter") { tgQuery = e.target.value; guard(loadTgFiles); }
 };
+for (const c of document.querySelectorAll("#kindFilter .chip")) {
+  c.onclick = () => {
+    kind = c.dataset.kind;
+    for (const o of document.querySelectorAll("#kindFilter .chip")) o.classList.toggle("on", o === c);
+    applyKind();
+  };
+}
+for (const b of document.querySelectorAll("#modeBar .mode")) b.onclick = () => setMode(b.dataset.mode);
+$("driveSelClear").onclick = () => guard(() => loadDrive());
+$("driveSelAll").onclick = () => {
+  for (const li of $("driveList").children) {
+    const c = li.querySelector(".pick");
+    if (c && !li.classList.contains("filtered-out") && !c.checked) { c.checked = true; c.onchange(); }
+  }
+};
+$("driveSelSend").onclick = () => guard(async () => {
+  if (await sendToTelegram([...driveSel.values()])) loadDrive();
+});
+setMode(mode);
+$("selClear").onclick = () => { selected.clear(); renderTgFiles($("chat").value); };
+$("selSend").onclick = () => guard(async () => {
+  if (await sendFiles(Number($("chat").value), [...selected.values()])) { selected.clear(); renderTgFiles($("chat").value); }
+});
+const fetchLink = () => guard(async () => {
+  const link = $("tgLink").value.trim();
+  if (!link) return toast("Paste a link to a Telegram message first.", true);
+  const f = await api("POST", "/telegram/resolve-link", { link });
+  if (await sendFiles(f.chat_id, [f])) $("tgLink").value = "";
+});
+$("tgLinkGo").onclick = fetchLink;
+$("tgLink").onkeydown = (e) => { if (e.key === "Enter") fetchLink(); };
+$("clearJobs").onclick = () => guard(async () => {
+  const r = await api("DELETE", "/jobs");
+  toast(r.cleared ? `Cleared ${r.cleared} finished job${r.cleared > 1 ? "s" : ""}.` : "Nothing to clear.");
+  loadJobs();
+});
+$("openHistory").onclick = () => { renderHistory(); $("history").showModal(); };
+$("historyClear").onclick = () => { localStorage.removeItem("ls-history"); renderHistory(); };
 $("driveSearch").oninput = (e) => filterList("driveList", e.target.value);
 $("refreshDrive").onclick = () => guard(() => loadDrive(cwd));
-$("refreshTg").onclick = () => guard(loadChats);
+$("refreshTg").onclick = () => { tgTargets = null; guard(loadChats); };
 $("up").onclick = () => guard(() => loadDrive(cwd.split("/").slice(0, -1).join("/")));
 $("mkdir").onclick = () => guard(async () => {
   const n = await ask("Folder name:", "");
