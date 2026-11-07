@@ -841,16 +841,19 @@ function renderHistory() {
 // ------------------------------------------------ buttons
 
 $("getKeys").onclick = () => ls.open("https://my.telegram.org/apps");
-$("enterKeys").onclick = $("openSettings").onclick = async () => {
+async function openSettingsDialog(tab) {
   const c = await ls.getConfig();
   $("apiId").value = c.apiId || "";
   $("apiHash").value = "";
   for (const inp of document.querySelectorAll("#settings [data-pref]")) inp.checked = pref(inp.dataset.pref);
   $("retryCount").value = String(retries());
-  showSettingsTab("transfers");
+  showSettingsTab(tab);
   $("apiHash").placeholder = c.hasApiHash ? "saved - leave empty to keep it" : "32 characters";
   $("settings").showModal();
-};
+  if (tab === "account") $("apiId").focus();
+}
+$("openSettings").onclick = () => openSettingsDialog("transfers");
+$("enterKeys").onclick = () => openSettingsDialog("account");
 $("saveKeys").onclick = () => guard(async () => {
   const apiId = $("apiId").value.trim();
   const apiHash = $("apiHash").value.trim();
