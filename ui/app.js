@@ -28,6 +28,7 @@ const seenDone = new Set();
 
 const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   play: '<polygon points="6 4 20 12 6 20 6 4"/>',
@@ -149,6 +150,7 @@ async function renderSetup() {
   $("onboarding").classList.toggle("hidden", ready);
   $("workspace").classList.toggle("hidden", !ready);
   $("modeBar").classList.toggle("hidden", !ready);
+  $("disconnect").classList.toggle("hidden", !connected);
   return hasKeys;
 }
 
@@ -171,10 +173,12 @@ ls.onLinkError((msg) => toast(msg, true));
 
 // ------------------------------------------------ status
 
+let failStreak = 0;
 async function refreshStatus() {
   try {
     const h = await api("GET", "/health");
     const d = await api("GET", "/disk");
+    failStreak = 0;
     connected = true;
     signedIn = Boolean(h.telegram);
     setStatus(signedIn ? "Connected" : "Connected · Telegram sign-in needed", signedIn ? "on" : "wait");
@@ -184,6 +188,9 @@ async function refreshStatus() {
     $("diskFill").style.width = `${Math.round((d.used / d.total) * 100)}%`;
     return h;
   } catch {
+    // Tolerate brief tunnel hiccups: only drop after 3 failures in a row.
+    failStreak++;
+    if (connected && failStreak < 3) return null;
     connected = false;
     signedIn = false;
     if (!$("status").classList.contains("wait")) setStatus("Not connected");
@@ -232,8 +239,9 @@ function renderTgFiles(chatId) {
       pick, icon(fileIcon(f.name)),
       el("div", { className: "info" },
         el("span", { className: "name", textContent: f.name, title: f.name }),
-        sub ? el("span", { className: "sub", textContent: sub, title: f.caption || "" }) : ""),
-      f.caption ? copyBtn(f.caption) : "",
+        sub ? el("div", { className: "subrow" },
+          el("span", { className: "sub", textContent: sub, title: f.caption || "" }),
+          f.caption ? copyBtn(f.caption) : "") : ""),
       el("span", { className: "meta", textContent: fmtSize(f.size) }),
       send);
     li.dataset.kind = fileKind(f.name);
@@ -245,7 +253,8 @@ function renderTgFiles(chatId) {
 }
 
 function copyBtn(text) {
-  const b = el("button", { className: "ghost small copy-cap", textContent: "Copy caption", title: "Copy this file's description text (not the file itself)" });
+  const b = el("button", { className: "copy-cap", type: "button", title: "Copy caption", ariaLabel: "Copy caption" });
+  b.append(icon("copy"));
   b.onclick = async (e) => {
     e.stopPropagation();
     try { await navigator.clipboard.writeText(text); toast("Description copied."); }
@@ -462,8 +471,8 @@ function setMode(m) {
 // ------------------------------------------------ drive -> telegram
 
 // Searchable chat picker with suggestions; any @username or t.me link is accepted too.
-function setupTargetCombo(targets) {
-  const input = $("tgTargetSearch"), list = $("tgTargetList"), err = $("tgTargetErr");
+function setupTargetCombo(targets, ids = ["tgTargetSearch", "tgTargetList", "tgTargetErr"]) {
+  const [input, list, err] = ids.map((i) => $(i));
   const icons = { saved: "⭐", user: "👤", group: "👥", channel: "📢" };
   const groups = [["saved", "Saved"], ["user", "People"], ["group", "Groups"], ["channel", "Channels"]];
   let chosen = targets.find((t) => t.id === "me") || null;
@@ -622,7 +631,7 @@ const PLATFORM_NAME = {
   sharepoint: "🟦 SharePoint / OneDrive", gdrive: "📁 Google Drive", dropbox: "🗃 Dropbox",
   mediafire: "🔥 MediaFire", youtube: "🔴 YouTube / video site", direct: "🔗 Direct link",
 };
-let linkChecked = null;
+let linkChecked = null, linkCombo = null;
 
 function linkDriveNote() {
   const n = $("linkDriveNote");
@@ -655,9 +664,7 @@ async function checkLink() {
 
 async function loadLinkTargets() {
   if (!tgTargets) tgTargets = await api("GET", "/telegram/targets");
-  const icons = { saved: "⭐", user: "👤", group: "👥", channel: "📢" };
-  $("linkTarget").replaceChildren(...tgTargets.map((t) =>
-    el("option", { value: t.id, textContent: `${icons[t.type] || ""} ${t.title}` })));
+  linkCombo = setupTargetCombo(tgTargets, ["linkTargetSearch", "linkTargetList", "linkTargetErr"]);
 }
 
 $("linkCheck").onclick = () => guard(checkLink);
@@ -673,12 +680,19 @@ $("linkStart").onclick = () => guard(async () => {
   if (!linkChecked || linkChecked.url !== $("linkUrl").value.trim()) await checkLink();
   if (!linkChecked) return;
   const to = linkTo();
-  const sel = $("linkTarget");
+  let pick = null;
+  if (to === "telegram") {
+    if (!linkCombo) await loadLinkTargets();
+    pick = linkCombo.value();
+    if (!pick) { linkCombo.error("Choose a chat from the list or type a @username."); return; }
+    try { await api("POST", "/telegram/check-target", { target: pick.id }); }
+    catch (e) { linkCombo.error(e.message || String(e)); return; }
+  }
   const body = {
     url: linkChecked.url, to, dest: cwd, quality: $("linkQuality").value, compress: $("linkCompress").checked,
     bundle: !!linkChecked.playlist && document.querySelector('input[name="linkBundle"]:checked').value === "1",
-    target: to === "telegram" ? sel.value : "",
-    target_title: to === "telegram" && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.trim() : "",
+    target: pick ? pick.id : "",
+    target_title: pick ? pick.title || pick.id : "",
   };
   await api("POST", "/links", body);
   toast(!linkChecked.playlist ? "Added to jobs"
@@ -709,6 +723,15 @@ const STATE_LABEL = {
   cancelled: "Stopped",
 };
 const FINISHED = ["done", "failed", "cancelled"];
+
+// ------------------------------------------------ preferences (saved on this PC)
+const PREF_DEFAULTS = { "ls-sound": true, "ls-keep-awake": true, "ls-notify": true, "ls-tray-min": false, "ls-close-tray": true };
+const pref = (k) => { const v = localStorage.getItem(k); return v === null ? PREF_DEFAULTS[k] : v !== "off"; };
+const retries = () => { const v = Number(localStorage.getItem("ls-retries")); return localStorage.getItem("ls-retries") === null ? 3 : Math.max(0, Math.min(5, v || 0)); };
+let retrySynced = false;
+const syncRetries = () => api("POST", "/settings", { auto_retries: retries() }).catch(() => { retrySynced = false; });
+const syncWindowPrefs = () => ls.setWindowPrefs?.({ trayMinimize: pref("ls-tray-min"), closeToTray: pref("ls-close-tray") });
+syncWindowPrefs();
 
 function chime() {
   if (localStorage.getItem("ls-sound") === "off") return;
@@ -744,14 +767,19 @@ function jobButton(label, iconName, cls, fn) {
 }
 
 async function loadJobs() {
+  if (!retrySynced) { retrySynced = true; syncRetries(); }
   const jobs = await api("GET", "/jobs");
+  const active = jobs.some((j) => !FINISHED.includes(j.state) && !j.paused);
+  // Keep the computer awake only while something is still transferring.
+  ls.setKeepAwake?.(pref("ls-keep-awake") && active);
+  ls.setActive?.(active);
   $("jobsEmpty").classList.toggle("hidden", jobs.length > 0);
   $("clearJobs").disabled = !jobs.some((j) => FINISHED.includes(j.state));
   $("jobs").replaceChildren(...jobs.map((j) => {
     if (j.state === "done" && !seenDone.has(j.id)) {
       seenDone.add(j.id);
       addHistory(j);
-      ls.notify("Lecture Sync", j.kind === "upload" || (j.kind === "link" && j.to === "telegram") ? `Sent → ${j.dest}` : `Finished → /${j.dest || "My Drive"}`);
+      if (pref("ls-notify")) ls.notify("Lecture Sync", j.kind === "upload" || (j.kind === "link" && j.to === "telegram") ? `Sent → ${j.dest}` : `Finished → /${j.dest || "My Drive"}`);
       chime();
       if (j.kind !== "upload" && !(j.kind === "link" && j.to === "telegram") && j.dest === cwd) loadDrive();
     }
@@ -760,7 +788,7 @@ async function loadJobs() {
     fill.style.width = `${Math.round(j.progress * 100)}%`;
     const pct = FINISHED.includes(state) || state === "queued" ? "" : ` · ${Math.round(j.progress * 100)}%`;
     const speed = (/^downloading/.test(state) || /^sending/.test(state)) && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
-    const label = (j.state === "failed" && j.error) || STATE_LABEL[state] ||
+    const label = (j.state === "failed" && j.error) || (/^retrying/.test(state) && j.error) || STATE_LABEL[state] ||
       state.replace(/^downloading (\d+\/\d+)/, "Downloading · item $1").replace(/^sending part/, "Sending to Telegram · part").replace(/^sending file/, "Sending to Telegram · file");
     const opts = [
       j.extra_ids && j.extra_ids.length ? `${j.extra_ids.length + 1} parts` : "",
@@ -817,7 +845,9 @@ $("enterKeys").onclick = $("openSettings").onclick = async () => {
   const c = await ls.getConfig();
   $("apiId").value = c.apiId || "";
   $("apiHash").value = "";
-  $("soundOn").checked = localStorage.getItem("ls-sound") !== "off";
+  for (const inp of document.querySelectorAll("#settings [data-pref]")) inp.checked = pref(inp.dataset.pref);
+  $("retryCount").value = String(retries());
+  showSettingsTab("transfers");
   $("apiHash").placeholder = c.hasApiHash ? "saved - leave empty to keep it" : "32 characters";
   $("settings").showModal();
 };
@@ -833,13 +863,64 @@ $("saveKeys").onclick = () => guard(async () => {
   toast("Telegram keys saved.");
   boot();
 });
-$("soundOn").onchange = (e) => {
-  localStorage.setItem("ls-sound", e.target.checked ? "on" : "off");
-  if (e.target.checked) chime();
+function showSettingsTab(name) {
+  for (const t of document.querySelectorAll("#settings .stab")) t.classList.toggle("on", t.dataset.tab === name);
+  for (const p of document.querySelectorAll("#settings .spane")) p.classList.toggle("hidden", p.dataset.pane !== name);
+}
+for (const t of document.querySelectorAll("#settings .stab")) t.onclick = () => showSettingsTab(t.dataset.tab);
+// Every switch saves itself the moment it changes.
+for (const inp of document.querySelectorAll("#settings [data-pref]")) {
+  inp.onchange = () => {
+    const k = inp.dataset.pref;
+    localStorage.setItem(k, inp.checked ? "on" : "off");
+    if (k === "ls-sound" && inp.checked) chime();
+    if (k === "ls-keep-awake") { if (!inp.checked) ls.setKeepAwake?.(false); else loadJobs().catch(() => {}); }
+    if (k === "ls-tray-min" || k === "ls-close-tray") syncWindowPrefs();
+  };
+}
+$("retryCount").onchange = (e) => {
+  localStorage.setItem("ls-retries", e.target.value);
+  syncRetries();
+};
+$("resetPrefs").onclick = () => {
+  for (const k of [...Object.keys(PREF_DEFAULTS), "ls-retries"]) localStorage.removeItem(k);
+  for (const inp of document.querySelectorAll("#settings [data-pref]")) inp.checked = pref(inp.dataset.pref);
+  $("retryCount").value = String(retries());
+  syncRetries(); syncWindowPrefs(); loadJobs().catch(() => {});
+  toast("Settings back to defaults.");
 };
 $("openAbout").onclick = async () => {
   $("about").showModal();
 };
+
+// ------------------------------------------------ updates
+let pendingUpdate = null;
+async function runUpdateCheck(manual) {
+  const r = await ls.checkUpdate().catch((e) => ({ ok: false, error: String(e) }));
+  if (!r.ok) { if (manual) toast("Couldn't check for updates: " + r.error, true); return; }
+  if (!r.available) { if (manual) toast(`You're on the latest version (v${r.current}).`); return; }
+  if (!manual && localStorage.getItem("ls-skip-version") === r.latest) return;
+  pendingUpdate = r;
+  $("updateVer").textContent = `v${r.current} → v${r.latest}`;
+  $("updateNotes").textContent = r.notes || "Bug fixes and improvements.";
+  if ($("about").open) $("about").close();
+  $("update").showModal();
+}
+$("checkUpdate").onclick = async (e) => {
+  const b = e.currentTarget; b.disabled = true; b.textContent = "Checking…";
+  await runUpdateCheck(true);
+  b.disabled = false; b.textContent = "Check for updates";
+};
+$("updateGet").onclick = () => {
+  if (pendingUpdate) ls.downloadUpdate(pendingUpdate.url);
+  $("update").close();
+  toast("Download started in your browser. Close LectureSync, then run the new file.");
+};
+$("updateSkip").onclick = () => {
+  if (pendingUpdate) localStorage.setItem("ls-skip-version", pendingUpdate.latest);
+  $("update").close();
+};
+setTimeout(() => runUpdateCheck(false), 5000);
 $("startColab").onclick = () => guard(ls.startColab);
 $("startColabExternal").onclick = () => guard(ls.startColabExternal);
 $("copyAgainExt").onclick = () => { ls.copyCell(); toast("Copied."); };
@@ -955,6 +1036,19 @@ $("driveSelSend").onclick = () => guard(async () => {
   if (await sendToTelegram([...driveSel.values()])) loadDrive();
 });
 setMode(mode);
+// Select every file currently visible (respects the type filter and the search box).
+$("tgSelAll").onclick = () => {
+  const items = [...$("tgFiles").children];
+  items.forEach((li, i) => {
+    if (li.classList.contains("kind-out") || li.classList.contains("filtered-out")) return;
+    const f = tgList[i];
+    if (f) selected.set(f.id, f);
+    const pick = li.querySelector(".pick");
+    if (pick) pick.checked = true;
+  });
+  if (!selected.size) toast("No files to select here.", true);
+  renderSel();
+};
 $("selClear").onclick = () => { selected.clear(); renderTgFiles($("chat").value); };
 $("selSend").onclick = () => guard(async () => {
   if (await sendFiles(Number($("chat").value), [...selected.values()])) { selected.clear(); renderTgFiles($("chat").value); }
@@ -986,6 +1080,7 @@ $("mkdir").onclick = () => guard(async () => {
 // ------------------------------------------------ start
 
 async function boot() {
+  retrySynced = false;
   const cfg = await ls.getConfig();
   $("ver").textContent = "v" + cfg.version;
   $("aboutVer").textContent = "Version " + cfg.version;
@@ -1006,6 +1101,17 @@ async function boot() {
     guard(loadChats);
   }
 }
+
+$("disconnect").onclick = async () => {
+  if (!confirm("Disconnect from this Colab session? Running transfers on Colab will keep going, but the app will go back to setup.")) return;
+  await ls.disconnect();
+  connected = false; signedIn = false; failStreak = 0;
+  stopQr();
+  setStatus("Not connected");
+  $("disk").classList.add("hidden");
+  await renderSetup();
+  toast("Disconnected. Start a new session whenever you're ready.");
+};
 
 setInterval(async () => {
   const was = connected && signedIn;

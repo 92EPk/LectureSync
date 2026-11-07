@@ -27,6 +27,16 @@
   const ua = navigator.userAgent;
   const os = /Windows/i.test(ua) ? "windows" : /Mac/i.test(ua) ? "mac" : /Linux|X11/i.test(ua) && !/Android/i.test(ua) ? "linux" : null;
   if (os) document.querySelector(`.card[data-os="${os}"]`)?.classList.add("mine");
+  // Hide the current OS from the "Other systems" line; jump to that OS's card on click.
+  document.querySelectorAll("[data-os-link]").forEach((a) => {
+    if (a.dataset.osLink === os) { const s = a.nextSibling; a.remove(); if (s && s.nodeType === 3) s.remove(); return; }
+    a.onclick = (e) => {
+      e.preventDefault();
+      const card = document.querySelector(`.card[data-os="${a.dataset.osLink}"]`);
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      card?.classList.add("flash"); setTimeout(() => card?.classList.remove("flash"), 1400);
+    };
+  });
   const osName = { windows: "Windows", mac: "macOS", linux: "Linux" };
 
   const size = (b) => (b > 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.round(b / 1e6) + " MB");
