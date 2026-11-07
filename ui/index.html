@@ -25,6 +25,7 @@
       <button id="toggleTheme" class="ghost" title="Dark / light">Theme</button>
       <button id="openSettings" class="ghost" data-icon="gear">Settings</button>
       <button id="openAbout" class="ghost" data-icon="info">About</button>
+      <button id="disconnect" class="ghost hidden" title="Leave this Colab session and go back to setup">Disconnect</button>
     </nav>
   </header>
 
@@ -155,12 +156,13 @@
             </select>
           </label>
           <div id="linkBundleRow" class="hidden">
-            <p class="muted small">How should the playlist arrive?</p>
-            <div class="row tight">
-              <label class="radio"><input type="radio" name="linkBundle" value="0" checked /> Separate videos</label>
-              <label class="radio"><input type="radio" name="linkBundle" value="1" /> One 7-Zip archive</label>
+            <p class="muted small dest-title">How should the playlist arrive?</p>
+            <div class="dest-cards" role="radiogroup">
+              <label class="dest-card"><input type="radio" name="linkBundle" value="0" checked />
+                <span class="dest-ico">🎬</span><span class="dest-txt"><b>Separate videos</b><small>Watch right away · one file each</small></span></label>
+              <label class="dest-card"><input type="radio" name="linkBundle" value="1" />
+                <span class="dest-ico">🗜️</span><span class="dest-txt"><b>One 7-Zip archive</b><small>Whole course in one file</small></span></label>
             </div>
-            <p class="muted small">Separate videos can be watched right away. The archive packs the whole course into one file (split into parts for Telegram) and needs free Colab space for the full playlist.</p>
           </div>
           <p class="muted small dest-title">Where should it go?</p>
           <div class="dest-cards" role="radiogroup">
@@ -170,13 +172,20 @@
               <span class="dest-ico">✈️</span><span class="dest-txt"><b>Telegram</b><small>Send to a chat or channel</small></span></label>
           </div>
           <p id="linkDriveNote" class="muted small"></p>
-          <label id="linkTargetRow" class="hidden">Send to
-            <select id="linkTarget"></select>
-          </label>
+          <div id="linkTargetRow" class="hidden">
+            <label>Send to <span class="muted">(search a chat, or type any @username)</span></label>
+            <div class="combo">
+              <input id="linkTargetSearch" type="search" autocomplete="off" placeholder="⭐ Saved Messages — type to search…" />
+              <ul id="linkTargetList" class="combo-list hidden" role="listbox"></ul>
+            </div>
+            <p id="linkTargetErr" class="small combo-err hidden"></p>
+          </div>
           <label class="check"><input type="checkbox" id="linkCompress" /> Compress before uploading
-            <small class="muted">— videos are shrunk for lectures (often 50–70% smaller, slides stay sharp); other files are packed with 7-Zip. Already-small files are left as they are.</small>
+            <small class="muted">— Reduces video size up to 70% without losing slide clarity; archives documents with 7-Zip. Skips already-compressed files (PDF, JPG, ZIP).</small>
           </label>
-          <button id="linkStart" class="primary">Start</button>
+          <div class="row end link-action-row">
+            <button id="linkStart" class="primary" data-icon="play">Start transfer</button>
+          </div>
         </div>
       </div>
       <div id="t2dBody">
@@ -199,6 +208,7 @@
         <button class="chip" data-kind="audio">Audio</button>
         <button class="chip" data-kind="image">Images</button>
         <button class="chip" data-kind="file">Other</button>
+        <button id="tgSelAll" class="ghost small" title="Select every file shown with the current filter and search">Select all</button>
       </div>
       <div id="selBar" class="selbar hidden">
         <span id="selCount"></span>
@@ -267,14 +277,65 @@
   <dialog id="settings">
     <form method="dialog">
       <h3>Settings</h3>
-      <p class="muted">Your keys stay on this PC, encrypted with your Windows account.</p>
-      <label>Telegram API ID <input id="apiId" inputmode="numeric" /></label>
-      <label>Telegram API Hash <input id="apiHash" type="password" placeholder="leave empty to keep the saved one" /></label>
-      <a href="#" data-open="https://my.telegram.org/apps" class="small">Where do I get these?</a>
-      <label class="check"><input id="soundOn" type="checkbox" /> Play a soft sound when a transfer finishes</label>
-      <div class="row end">
+      <p class="muted small">Switches save instantly. Telegram keys need the Save button.</p>
+      <nav class="stabs">
+        <button type="button" class="stab on" data-tab="transfers">Transfers</button>
+        <button type="button" class="stab" data-tab="alerts">Alerts</button>
+        <button type="button" class="stab" data-tab="window">Window</button>
+        <button type="button" class="stab" data-tab="account">Telegram keys</button>
+      </nav>
+
+      <section class="spane" data-pane="transfers">
+        <div class="srow">
+          <div><b>Keep the computer awake</b><span>Stops sleep only while transfers run, then lets it sleep normally.</span></div>
+          <input type="checkbox" class="switch" data-pref="ls-keep-awake" />
+        </div>
+        <div class="srow">
+          <div><b>Try again automatically</b><span>If the connection drops, the transfer restarts by itself before it is marked Failed.</span></div>
+          <select id="retryCount">
+            <option value="0">Off</option>
+            <option value="1">1 time</option>
+            <option value="2">2 times</option>
+            <option value="3">3 times</option>
+            <option value="5">5 times</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="spane hidden" data-pane="alerts">
+        <div class="srow">
+          <div><b>Sound when finished</b><span>A soft chime when a transfer is done.</span></div>
+          <input type="checkbox" class="switch" data-pref="ls-sound" />
+        </div>
+        <div class="srow">
+          <div><b>Desktop notification</b><span>A pop-up from your system when a transfer is done.</span></div>
+          <input type="checkbox" class="switch" data-pref="ls-notify" />
+        </div>
+      </section>
+
+      <section class="spane hidden" data-pane="window">
+        <div class="srow">
+          <div><b>Minimize to tray</b><span>The minimize button hides the app next to the clock instead of the taskbar.</span></div>
+          <input type="checkbox" class="switch" data-pref="ls-tray-min" />
+        </div>
+        <div class="srow">
+          <div><b>Keep running when closed</b><span>Closing the window during a transfer hides it next to the clock so nothing stops.</span></div>
+          <input type="checkbox" class="switch" data-pref="ls-close-tray" />
+        </div>
+      </section>
+
+      <section class="spane hidden" data-pane="account">
+        <p class="muted small">Your keys stay on this PC, encrypted with your computer account.</p>
+        <label>Telegram API ID <input id="apiId" inputmode="numeric" /></label>
+        <label>Telegram API Hash <input id="apiHash" type="password" placeholder="leave empty to keep the saved one" /></label>
+        <a href="#" data-open="https://my.telegram.org/apps" class="small">Where do I get these?</a>
+        <div class="row end"><button type="button" id="saveKeys" class="primary">Save keys</button></div>
+      </section>
+
+      <div class="row end sfoot">
+        <button type="button" id="resetPrefs" class="ghost small">Reset to defaults</button>
+        <span class="grow"></span>
         <button value="cancel" class="ghost">Close</button>
-        <button type="button" id="saveKeys" class="primary">Save</button>
       </div>
     </form>
   </dialog>
@@ -294,7 +355,23 @@
         <dt>GitHub</dt><dd><a href="#" data-open="https://github.com/92EPK">@92EPK</a></dd>
       </dl>
       <p class="muted small">© Ahmed Omran. All rights reserved.</p>
-      <div class="row end"><button value="ok" class="primary">Close</button></div>
+      <div class="row end">
+        <button type="button" id="checkUpdate" class="ghost">Check for updates</button>
+        <button value="ok" class="primary">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="update">
+    <form method="dialog">
+      <h3>🚀 Update available</h3>
+      <p id="updateVer" class="muted"></p>
+      <pre id="updateNotes" class="update-notes"></pre>
+      <div class="row end">
+        <button value="later" class="ghost">Later</button>
+        <button type="button" id="updateSkip" class="ghost">Skip this version</button>
+        <button type="button" id="updateGet" class="primary">Download update</button>
+      </div>
     </form>
   </dialog>
 

@@ -354,3 +354,9 @@ p { margin: 0; }
 @media (max-width: 620px) { #features .bento { grid-template-columns: 1fr; } #features .cell, #features .cell.big { grid-column: auto; padding: 22px; } }
 .extras { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 22px; }
 .extras span { font-size: 14px; color: var(--muted); padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+
+/* other-OS links under the hero download button */
+.other-os { margin: 6px 0 0; font-size: 14px; color: var(--muted); }
+.other-os a { color: var(--text); font-weight: 600; text-decoration: none; border-bottom: 1px dashed var(--line2); }
+.other-os a:hover { color: var(--accent); border-color: var(--accent); }
+.card.flash { border-color: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); transition: box-shadow .3s; }

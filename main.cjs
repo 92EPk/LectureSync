@@ -14,7 +14,8 @@
  * browsers). Colab is always opened in the user's real default browser.
  */
 const {
-  app, BrowserWindow, ipcMain, safeStorage, Notification, clipboard, shell, dialog,
+  app, BrowserWindow, ipcMain, safeStorage, Notification, clipboard, shell, dialog, powerSaveBlocker,
+  Tray, Menu, nativeImage,
 } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -132,8 +133,10 @@ function buildCell(token) {
     "<a href=\"{link}\" target=\"_blank\" style=\"display:inline-block;background:#2e7d32;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600\">Connect to LectureSync</a>",
     "<p style=\"margin:12px 0 0;font-size:12px;color:#777\">Button not working? Copy this line and the app connects by itself:<br><code>{url}</code></p></div>'''))",
     "print('LECTURE_SYNC_URL=' + url)",
+    "# Keep-alive: a silent audio tone stops the browser from freezing this tab.",
+    "display(HTML('<script>try{const c=new AudioContext();const o=c.createOscillator();const g=c.createGain();g.gain.value=0.0001;o.connect(g);g.connect(c.destination);o.start();document.addEventListener(\"click\",()=>c.resume());}catch(e){}</script>'))",
     "while True:",
-    "    time.sleep(300)",
+    "    time.sleep(60)",
     "    print(time.strftime('%H:%M'), 'worker alive')",
   ].join("\n");
 }
@@ -260,6 +263,10 @@ ipcMain.handle("config:url", async (_e, url) => {
   await call("GET", "/disk", null, { url });
   writeConfig({ url });
 });
+// Disconnect: forget this Colab session (URL + token); Telegram API keys are kept.
+ipcMain.handle("config:disconnect", () => {
+  writeConfig({ url: "", token: "" });
+});
 ipcMain.handle("telegram:configure", () => {
   const { apiId, apiHash } = readConfig();
   if (!apiId || !apiHash) throw new Error("Add your Telegram API ID and API Hash in Settings first");
@@ -276,6 +283,126 @@ ipcMain.handle("open", (_e, url) => {
   else if (url.startsWith("mailto:B9x@outlook.com")) shell.openExternal(url);
 });
 ipcMain.handle("notify", (_e, title, body) => new Notification({ title, body }).show());
+// Stop the computer from sleeping while transfers run; released as soon as the queue is idle.
+let awakeId = null;
+ipcMain.handle("power:keep-awake", (_e, on) => {
+  if (on && awakeId === null) awakeId = powerSaveBlocker.start("prevent-app-suspension");
+  else if (!on && awakeId !== null) { powerSaveBlocker.stop(awakeId); awakeId = null; }
+});
+
+// ------------------------------------------------------------ system tray
+// Window behaviour chosen by the user in Settings, plus whether transfers are running.
+const winPrefs = { trayMinimize: false, closeToTray: true };
+let jobsActive = false;
+let tray = null;
+let quitting = false;
+ipcMain.handle("jobs:active", (_e, on) => { jobsActive = Boolean(on); updateTray(); });
+ipcMain.handle("window:prefs", (_e, p) => {
+  winPrefs.trayMinimize = Boolean(p && p.trayMinimize);
+  winPrefs.closeToTray = Boolean(p && p.closeToTray);
+});
+
+function showMain() {
+  if (!mainWin) return;
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.setSkipTaskbar(false);
+  mainWin.show();
+  mainWin.focus();
+}
+
+function updateTray() {
+  if (!tray) return;
+  tray.setToolTip(jobsActive ? "LectureSync · transferring…" : "LectureSync");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: jobsActive ? "Transfers running" : "No transfers running", enabled: false },
+    { type: "separator" },
+    { label: "Open LectureSync", click: showMain },
+    { label: "Quit", click: () => { quitting = true; app.quit(); } },
+  ]));
+}
+
+function createTray() {
+  if (tray) return;
+  const icon = nativeImage.createFromPath(path.join(__dirname, "ui", "assets", "logo.png")).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.on("click", showMain);
+  tray.on("double-click", showMain);
+  updateTray();
+}
+
+function hideToTray(reason) {
+  createTray();
+  mainWin.hide();
+  mainWin.setSkipTaskbar(true);
+  if (reason && Notification.isSupported()) {
+    new Notification({ title: "LectureSync is still running", body: reason }).show();
+  }
+}
+
+// ------------------------------------------------------------ update check
+// Asks GitHub for the latest release and compares it with this build. No
+// auto-install: works the same for installer, portable, dmg and AppImage.
+const RELEASES_API = "https://api.github.com/repos/92EPK/LectureSync/releases/latest";
+
+function newerThan(a, b) {
+  const pa = String(a).replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+function pickAsset(assets) {
+  const names = assets.map((a) => ({ a, n: a.name.toLowerCase() }));
+  const arch = process.arch;
+  const find = (fn) => (names.find(fn) || {}).a;
+  if (process.platform === "win32") {
+    const portable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+    return portable
+      ? find(({ n }) => n.includes("portable") && n.endsWith(".exe"))
+      : find(({ n }) => n.endsWith(".exe") && !n.includes("portable"));
+  }
+  if (process.platform === "darwin") {
+    return find(({ n }) => n.endsWith(".dmg") && n.includes(arch)) || find(({ n }) => n.endsWith(".dmg"));
+  }
+  return find(({ n }) => n.endsWith(".appimage")) || find(({ n }) => n.endsWith(".deb"));
+}
+
+function checkForUpdate() {
+  return new Promise((resolve) => {
+    const req = https.get(RELEASES_API, {
+      headers: { "User-Agent": "LectureSync/" + app.getVersion(), Accept: "application/vnd.github+json" },
+      timeout: 10000,
+    }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => {
+        try {
+          if (res.statusCode !== 200) return resolve({ ok: false, error: "GitHub replied " + res.statusCode });
+          const r = JSON.parse(body);
+          const latest = String(r.tag_name || "").replace(/^v/i, "");
+          const current = app.getVersion();
+          const asset = pickAsset(r.assets || []);
+          resolve({
+            ok: true, current, latest,
+            available: Boolean(latest) && newerThan(latest, current),
+            notes: String(r.body || "").slice(0, 4000),
+            url: asset ? asset.browser_download_url : r.html_url,
+            page: r.html_url,
+          });
+        } catch (e) { resolve({ ok: false, error: e.message }); }
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("timed out")));
+    req.on("error", (e) => resolve({ ok: false, error: e.message }));
+  });
+}
+
+ipcMain.handle("update:check", () => checkForUpdate());
+ipcMain.handle("update:download", (_e, url) => {
+  if (/^https:\/\/github\.com\/92EPK\/LectureSync\//i.test(String(url))) shell.openExternal(url);
+});
 
 // ------------------------------------------------------------ deep link wiring
 
@@ -328,6 +455,16 @@ function createMainWindow() {
     },
   });
   mainWin.setMenuBarVisibility(false);
+  mainWin.on("minimize", (e) => {
+    if (!winPrefs.trayMinimize) return;
+    e.preventDefault();
+    hideToTray();
+  });
+  mainWin.on("close", (e) => {
+    if (quitting || !winPrefs.closeToTray || !jobsActive) return;
+    e.preventDefault();
+    hideToTray("Your transfers keep going. Click the tray icon to open the app.");
+  });
   mainWin.webContents.on("preload-error", (_e, file, err) => {
     console.error("Preload failed:", file, err);
     mainWin.webContents.openDevTools();
@@ -348,4 +485,5 @@ function createMainWindow() {
   mainWin.loadFile(path.join(__dirname, "ui", "index.html"));
 }
 
+app.on("before-quit", () => { quitting = true; });
 app.on("window-all-closed", () => app.quit());

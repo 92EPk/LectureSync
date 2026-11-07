@@ -110,9 +110,14 @@ stateDiagram-v2
     extracting --> uploading
     downloading --> uploading: no extraction
     uploading --> done
-    downloading --> failed
-    extracting --> failed
-    uploading --> failed
+    downloading --> retrying: transient error
+    extracting --> retrying: transient error
+    uploading --> retrying: transient error
+    retrying --> queued: after back-off
+    retrying --> failed: attempts exhausted
+    downloading --> failed: permanent error
+    extracting --> failed: permanent error
+    uploading --> failed: permanent error
     failed --> queued: retry
     queued --> paused
     paused --> queued: resume
@@ -148,6 +153,19 @@ Telegram caps files at 2 GB (4 GB with Premium). A pre-flight call returns size,
 
 ### 6.5 Respecting rate limits
 Jobs run one at a time and Telegram `FloodWait` responses are honoured. Simple serial scheduling made disk usage predictable and kept accounts away from bans.
+
+### 6.6 Surviving network drops
+Colab, Telegram and Drive connections drop occasionally on long transfers. The job engine classifies each failure:
+
+- **Permanent** (wrong archive password, file not found, no space, file too big, private/forbidden) — the job fails at once; retrying cannot help.
+- **Transient** (everything else) — the job enters `retrying n/max`, waits with growing back-off (3 s, 8 s, 15 s, 30 s, 60 s) and is re-queued.
+
+The number of attempts (0–5) is a user setting synced from the app to the worker through `GET/POST /settings`.
+
+### 6.7 Long transfers on the desktop
+- **Sleep prevention:** while jobs are active the main process holds an Electron `powerSaveBlocker`, released as soon as the queue is idle.
+- **System tray:** closing the window during active transfers hides it to the tray instead of quitting; minimising to tray is optional. The tray tooltip and menu show live status.
+- **Update checker:** the main process queries the GitHub Releases API, compares semantic versions with `app.getVersion()` and offers the matching installer for the user's OS and architecture.
 
 ## 7. Security model
 

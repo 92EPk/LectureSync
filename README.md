@@ -60,6 +60,12 @@ LectureSync removes the user's machine from the data path. The desktop app is a 
 - **QR-code Telegram login** — no SMS required (SMS is unreliable on many mobile networks and blocked for datacenter IPs). Phone code + 2FA remain available.
 - **Drive file manager** — browse, search, create, rename and delete (to Drive trash) folders without leaving the app.
 - **Stable notebook reuse** — one Colab notebook per user, reopened every session; no notebook sprawl.
+- **Auto-retry on network drops** — transient failures retry automatically with growing back-off (configurable: off, 1, 2, 3 or 5 attempts); permanent errors (wrong password, missing file, no space) fail immediately.
+- **System tray & background transfers** — closing or minimising the window keeps transfers running in the tray, with live status in the tray menu.
+- **In-app update checker** — checks GitHub Releases on startup (or on demand) and downloads the right installer for your OS.
+- **Sleep prevention** — keeps the computer awake while transfers run, then releases it.
+- **Telegram select all** — pick every file in a chat with one click.
+- **Professional settings** — tabbed Settings (Transfers, Alerts, Window, Telegram keys) with sounds, notifications and window behaviour your way.
 - **Light / dark theme**, responsive layout, native notifications.
 - **Bring-your-own credentials** — every user runs on their own Google account and Telegram API keys.
 
@@ -89,7 +95,7 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 
 ```powershell
 # Windows (PowerShell)
-Get-FileHash .\LectureSync-Portable-1.0.0-x64.exe -Algorithm SHA256
+Get-FileHash .\LectureSync-Portable-1.2.0-x64.exe -Algorithm SHA256
 ```
 
 ## Quick start
@@ -149,8 +155,8 @@ macOS images can only be produced on macOS; the CI pipeline handles all three.
 
 ```bash
 # bump "version" in package.json first
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 GitHub Actions builds on native Windows, Linux and macOS runners in parallel, computes SHA-256 checksums and publishes a Release . Builds can also be started manually from **Actions → Release → Run workflow**.

@@ -32,6 +32,8 @@ from telethon.tl.functions.auth import ExportAuthorizationRequest, ImportAuthori
 from telethon.tl.functions.upload import GetFileRequest, SaveBigFilePartRequest
 from telethon.tl.types import InputFileBig, DocumentAttributeFilename
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
+from telethon.errors import AuthKeyError, RPCError, UnauthorizedError
+from fastapi.responses import JSONResponse
 
 # Telegram encrypts every chunk with AES-IGE. Without a native backend Telethon
 # falls back to pure Python, which pins one CPU core at ~4-5 MB/s. tgcrypto ships
@@ -82,6 +84,43 @@ app = FastAPI(title="lecture-sync", docs_url=None, redoc_url=None)
 tg: TelegramClient | None = None
 _tg_key: tuple[int, str] | None = None
 _pending_phone: dict[str, str] = {}
+# Last known Telegram sign-in state, kept in memory so /health never waits on
+# Telegram's network. Updated on configure/sign-in, by a slow background check,
+# and flipped off as soon as any call reports the session was revoked.
+_tg_authorized = False
+
+
+async def _check_auth(timeout: float = 5.0) -> bool:
+    """Ask Telegram if we're signed in; on timeout/network error keep the last known state."""
+    global _tg_authorized
+    if tg is None:
+        _tg_authorized = False
+        return False
+    try:
+        _tg_authorized = bool(await asyncio.wait_for(tg.is_user_authorized(), timeout))
+    except Exception:  # noqa: BLE001 - slow or flaky Telegram must not change state
+        pass
+    return _tg_authorized
+
+
+def _set_authorized(value: bool) -> None:
+    global _tg_authorized
+    _tg_authorized = value
+
+
+@app.exception_handler(RPCError)
+async def _telegram_rpc_error(_request, exc: RPCError):
+    # Session revoked/expired: drop the cached state so the app asks to sign in again.
+    if isinstance(exc, (AuthKeyError, UnauthorizedError)):
+        _set_authorized(False)
+        return JSONResponse(status_code=401, content={"detail": "Telegram session ended. Sign in again."})
+    return JSONResponse(status_code=502, content={"detail": f"Telegram error: {type(exc).__name__}: {exc}"})
+
+
+async def _auth_watch() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await _check_auth()
 
 
 def require_token(x_access_token: str = Header(default="")) -> None:
@@ -109,9 +148,9 @@ def safe_path(rel: str) -> Path:
 # ---------------------------------------------------------------- status
 
 @app.get("/health")
-async def health():
-    authorized = tg is not None and await tg.is_user_authorized()
-    return {"ok": True, "telegram_ready": tg is not None, "telegram": authorized}
+def health():
+    # Memory only: answers instantly even when Telegram is slow or unreachable.
+    return {"ok": True, "telegram_ready": tg is not None, "telegram": tg is not None and _tg_authorized}
 
 
 @app.get("/disk", dependencies=auth)
@@ -146,17 +185,18 @@ class CodeIn(BaseModel):
 
 @app.post("/telegram/configure", dependencies=auth)
 async def configure(body: KeysIn):
-    global tg, _tg_key
+    global tg, _tg_key, _tg_authorized
     key = (body.api_id, body.api_hash)
     if tg is not None and _tg_key == key:
-        return {"ok": True, "telegram": await tg.is_user_authorized()}
+        return {"ok": True, "telegram": await _check_auth()}
+    _tg_authorized = False
     if tg is not None:
         await tg.disconnect()
     # One session file per api_id, so two people sharing a Drive never collide.
     tg = TelegramClient(str(STATE_DIR / f"telegram-{body.api_id}"), body.api_id, body.api_hash)
     await tg.connect()
     _tg_key = key
-    return {"ok": True, "telegram": await tg.is_user_authorized()}
+    return {"ok": True, "telegram": await _check_auth(15.0)}
 
 
 @app.post("/telegram/send-code", dependencies=auth)
@@ -176,6 +216,7 @@ async def sign_in(body: CodeIn):
         if not body.password:
             raise HTTPException(status_code=409, detail="2fa password required")
         await c.sign_in(password=body.password)
+    _set_authorized(True)
     return {"ok": True}
 
 
@@ -197,6 +238,7 @@ def _qr_svg(url: str) -> str:
 async def _qr_wait(login):
     try:
         await login.wait(timeout=120)
+        _set_authorized(True)
         _qr["state"] = "done"
     except SessionPasswordNeededError:
         _qr["state"] = "password"
@@ -213,7 +255,7 @@ async def qr_start():
         # Colab tunnels and idle VMs drop the Telegram socket; reconnect first.
         if not c.is_connected():
             await c.connect()
-        if await c.is_user_authorized():
+        if await _check_auth(15.0):
             return {"state": "done"}
         login = await c.qr_login()
     except FloodWaitError as e:
@@ -248,6 +290,7 @@ class PasswordIn(BaseModel):
 @app.post("/telegram/qr/password", dependencies=auth)
 async def qr_password(body: PasswordIn):
     await client().sign_in(password=body.password)
+    _set_authorized(True)
     _qr["state"] = "done"
     return {"ok": True}
 
@@ -774,6 +817,28 @@ async def _run(job: Job) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+# Automatic retries after a failure (network drops etc.); the desktop app sets this.
+SETTINGS = {"auto_retries": 3}
+RETRY_DELAYS = (3, 8, 15, 30, 60)
+# Failures that another attempt cannot fix.
+_NO_RETRY = ("password", "not found", "no space", "too big", "invalid", "forbidden", "private")
+
+
+class SettingsIn(BaseModel):
+    auto_retries: int = 3
+
+
+@app.get("/settings", dependencies=auth)
+def get_settings():
+    return SETTINGS
+
+
+@app.post("/settings", dependencies=auth)
+def set_settings(s: SettingsIn):
+    SETTINGS["auto_retries"] = max(0, min(5, s.auto_retries))
+    return SETTINGS
+
+
 async def _worker() -> None:
     while True:
         job_id = await _queue.get()
@@ -781,17 +846,35 @@ async def _worker() -> None:
         if job is None or job.state == "cancelled":
             continue
         runner = {"upload": _run_upload, "link": _run_link}.get(job.kind, _run)
-        task = asyncio.create_task(runner(job))
-        TASKS[job.id] = task
-        try:
-            await task
-        except asyncio.CancelledError:
-            job.state, job.speed = "cancelled", 0.0
-        except Exception as e:  # surface every failure to the UI instead of killing the loop
-            if job.state != "cancelled":
-                job.state, job.error = "failed", str(e)
-        finally:
-            TASKS.pop(job.id, None)
+        attempt = 0
+        while True:
+            task = asyncio.create_task(runner(job))
+            TASKS[job.id] = task
+            try:
+                await task
+                break
+            except asyncio.CancelledError:
+                job.state, job.speed = "cancelled", 0.0
+                break
+            except Exception as e:  # surface every failure to the UI instead of killing the loop
+                if job.state == "cancelled":
+                    break
+                msg = str(e) or e.__class__.__name__
+                if attempt < SETTINGS["auto_retries"] and not any(k in msg.lower() for k in _NO_RETRY):
+                    attempt += 1
+                    delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+                    print(f"[JOB {job.id}] attempt {attempt} failed ({msg}), retrying in {delay}s", flush=True)
+                    job.state, job.speed, job.progress = f"retrying {attempt}/{SETTINGS['auto_retries']}", 0.0, 0.0
+                    job.error = f"Connection problem, trying again ({attempt}/{SETTINGS['auto_retries']})…"
+                    await asyncio.sleep(delay)
+                    if job.state == "cancelled":
+                        break
+                    job.state, job.error = "queued", None
+                    continue
+                job.state, job.error = "failed", msg
+                break
+            finally:
+                TASKS.pop(job.id, None)
 
 
 # ---------------------------------------------------------------- Drive -> Telegram
@@ -1542,6 +1625,10 @@ def _ytdlp_download(job: Job, url: str, work: Path, index: int, total_items: int
     return path
 
 
+# Width cap per requested quality: compression never downgrades the resolution the user chose.
+MAX_W = {"1080": 1920, "720": 1280, "480": 854}
+
+
 async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
     """Lecture profile: H.264 CRF 26 keeps slide text sharp at a fraction of the size."""
     out = src.with_name(src.stem + " (compressed).mp4")
@@ -1556,7 +1643,7 @@ async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
         pass
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-vf", "scale='min(1280,iw)':-2",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-vf", f"scale='min({MAX_W.get(job.quality, 1280)},iw)':-2",
         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-progress", "pipe:1", str(out),
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
@@ -1804,3 +1891,4 @@ async def _run_link(job: Job) -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     asyncio.create_task(_worker())
+    asyncio.create_task(_auth_watch())
