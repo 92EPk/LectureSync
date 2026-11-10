@@ -193,6 +193,7 @@
         <h2 data-icon="send">Telegram</h2>
         <button id="refreshTg" class="ghost small" title="Refresh" data-icon="refresh"></button>
       </div>
+      <input id="chatSearch" class="search" type="search" autocomplete="off" placeholder="Search chats &amp; channels…" />
       <select id="chat"></select>
       <div class="row tight link-row">
         <input id="tgLink" placeholder="Paste a Telegram message link (t.me/…)" />
@@ -389,7 +390,7 @@
       <p id="promptText"></p>
       <input id="promptInput" />
       <div class="row end">
-        <button value="cancel" class="ghost">Cancel</button>
+        <button type="button" id="promptCancel" class="ghost">Cancel</button>
         <button value="ok" id="promptOk" class="primary">OK</button>
       </div>
     </form>

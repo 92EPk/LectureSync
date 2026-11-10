@@ -1343,6 +1343,35 @@ def _http_get_text(url: str) -> str:
         return r.read(2_000_000).decode("utf-8", errors="ignore")
 
 
+def _gdrive_direct(fid: str) -> str:
+    """Big public files (>100 MB) return a "can't scan for viruses" page; read its form to get the real link."""
+    base = f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t"
+    try:
+        req = urllib.request.Request(base, headers={"User-Agent": UA, "Range": "bytes=0-0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            if "text/html" not in (r.headers.get("Content-Type") or "").lower():
+                return base
+            page = r.read(500_000).decode("utf-8", errors="ignore")
+    except Exception:
+        return base
+    m = re.search(r'<form[^>]+action="([^"]+)"(.*?)</form>', page, re.S)
+    if not m:
+        if "accounts.google.com" in page or "ServiceLogin" in page:
+            raise HTTPException(status_code=400, detail="this Google Drive file isn't public — share it as 'anyone with the link'")
+        if "quota" in page.lower():
+            raise HTTPException(status_code=400, detail="Google Drive download limit reached for this file today — try again later")
+        return base
+    fields = {}
+    for attrs in re.findall(r"<input([^>]*)>", m.group(2)):
+        n = re.search(r'name=["\']([^"\']+)["\']', attrs)
+        v = re.search(r'value=["\']([^"\']*)["\']', attrs)
+        if n and v:
+            fields[n.group(1)] = v.group(1)
+    fields.setdefault("id", fid)
+    action = urllib.parse.urljoin("https://drive.usercontent.google.com/", m.group(1).replace("&amp;", "&"))
+    return action + ("&" if "?" in action else "?") + urllib.parse.urlencode(fields)
+
+
 def resolve_url(raw: str) -> tuple[str, str]:
     """Turn a share/page link into a direct download link. Returns (url, platform)."""
     url = raw.strip()
@@ -1363,7 +1392,7 @@ def resolve_url(raw: str) -> tuple[str, str]:
         fid = m.group(1) if m else (qs.get("id") or [""])[0]
         if not fid:
             raise HTTPException(status_code=400, detail="this Google Drive link has no file id (folders aren't supported yet)")
-        return f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t", platform
+        return _gdrive_direct(fid), platform
     if platform == "dropbox":
         q = {k: v for k, v in qs.items() if k != "dl"}
         q["dl"] = ["1"]
@@ -1629,6 +1658,25 @@ def _ytdlp_download(job: Job, url: str, work: Path, index: int, total_items: int
 MAX_W = {"1080": 1920, "720": 1280, "480": 854}
 
 
+_NVENC: bool | None = None
+
+
+def _video_codec() -> list[str]:
+    """Use Colab's GPU encoder when the user picked a GPU runtime; otherwise the fastest CPU profile."""
+    global _NVENC
+    if _NVENC is None:
+        try:
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "nullsrc=s=256x256:d=0.1",
+                                "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True, timeout=20)
+            _NVENC = r.returncode == 0
+        except Exception:
+            _NVENC = False
+    if _NVENC:
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
+    # CRF 22 is visually lossless for slides, faces and screen text; veryfast keeps it quick on Colab's CPU.
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
+
+
 async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
     """Lecture profile: H.264 CRF 26 keeps slide text sharp at a fraction of the size."""
     out = src.with_name(src.stem + " (compressed).mp4")
@@ -1641,10 +1689,15 @@ async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
         dur = float(json.loads(o or b"{}").get("format", {}).get("duration") or 0)
     except Exception:
         pass
+    # Already lean (~<700 kbps): re-encoding would burn minutes for almost no gain.
+    if dur and src.stat().st_size * 8 / dur < 700_000:
+        return src
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-vf", f"scale='min({MAX_W.get(job.quality, 1280)},iw)':-2",
-        "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-progress", "pipe:1", str(out),
+        *_video_codec(), "-threads", "0", "-pix_fmt", "yuv420p",
+        # Keep the original resolution; only YouTube jobs (where the user picked a quality) get a size cap.
+        *(["-vf", f"scale='min({MAX_W.get(job.quality, 1920)},iw)':-2"] if job.platform == "youtube" else []),
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-progress", "pipe:1", str(out),
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         while True:

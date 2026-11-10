@@ -102,6 +102,7 @@ function ask(text, value = "") {
     $("promptInput").classList.toggle("hidden", value === null);
     d.onclose = () => resolve(d.returnValue === "ok" ? $("promptInput").value : null);
     d.returnValue = "";
+    $("promptCancel").onclick = () => d.close("cancel");
     d.showModal();
   });
 }
@@ -201,9 +202,28 @@ async function refreshStatus() {
 
 // ------------------------------------------------ telegram
 
+let allChats = [];
+// Narrow the chat dropdown while typing; picks the first match so its files load right away.
+function filterChats(q) {
+  const s = q.trim().toLowerCase();
+  const cur = $("chat").value;
+  const list = s ? allChats.filter((c) => String(c.title).toLowerCase().includes(s)) : allChats;
+  $("chat").replaceChildren(...list.map((c) => el("option", { value: c.id, textContent: c.title })));
+  if (!list.length) {
+    tgList = [];
+    selected.clear();
+    $("tgFiles").replaceChildren(el("li", { className: "muted", textContent: "No matching chats" }));
+    return;
+  }
+  if (list.some((c) => String(c.id) === cur)) $("chat").value = cur;
+  else guard(loadTgFiles);
+}
+
 async function loadChats() {
   const chats = await api("GET", "/telegram/chats");
   const prev = $("chat").value;
+  allChats = chats;
+  $("chatSearch").value = "";
   $("chat").replaceChildren(...chats.map((c) => el("option", { value: c.id, textContent: c.title })));
   const want = prev || localStorage.getItem("ls-last-chat");
   if (want && chats.some((c) => String(c.id) === want)) $("chat").value = want;
@@ -788,6 +808,7 @@ async function loadJobs() {
     fill.style.width = `${Math.round(j.progress * 100)}%`;
     const pct = FINISHED.includes(state) || state === "queued" ? "" : ` · ${Math.round(j.progress * 100)}%`;
     const speed = (/^downloading/.test(state) || /^sending/.test(state)) && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
+    const eta = FINISHED.includes(state) || state === "paused" ? "" : jobEta(j, state);
     const label = (j.state === "failed" && j.error) || (/^retrying/.test(state) && j.error) || STATE_LABEL[state] ||
       state.replace(/^downloading (\d+\/\d+)/, "Downloading · item $1").replace(/^sending part/, "Sending to Telegram · part").replace(/^sending file/, "Sending to Telegram · file");
     const opts = [
@@ -821,10 +842,23 @@ async function loadJobs() {
         el("span", { className: "job-name", textContent: title, title }),
         el("span", { className: "meta", textContent: "#" + j.id })),
       el("div", { className: "job-state", textContent: (j.kind === "upload" ? "→ Telegram: " + j.dest : "→ /" + (j.dest || "My Drive")) + (opts ? ` · ${opts}` : "") }),
-      el("div", { className: "job-state", textContent: label + (j.state === "failed" ? "" : pct + speed) }),
+      el("div", { className: "job-state", textContent: label + (j.state === "failed" ? "" : pct + speed + eta) }),
       el("div", { className: "bar" }, fill),
       actions.length ? el("div", { className: "job-actions" }, ...actions) : "");
   }));
+}
+
+// Time left: from progress rate since this stage began (works for compressing too, where speed is 0).
+const etaTrack = new Map();
+const fmtEta = (s) => s < 60 ? `${Math.max(1, Math.round(s))}s` : s < 3600 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+function jobEta(j, state) {
+  const now = Date.now(), p = j.progress || 0;
+  let t = etaTrack.get(j.id);
+  if (!t || t.state !== state || p < t.p0) { t = { state, t0: now, p0: p }; etaTrack.set(j.id, t); }
+  let secs = 0;
+  if (j.speed && j.size && /^(downloading|sending)/.test(state)) secs = j.size * (1 - p) / j.speed;
+  else if (p > t.p0 && now - t.t0 > 3000) secs = (now - t.t0) / 1000 * (1 - p) / (p - t.p0);
+  return secs > 0 && isFinite(secs) ? ` · ~${fmtEta(secs)} left` : "";
 }
 
 function renderHistory() {
@@ -1012,6 +1046,8 @@ $("signIn").onclick = () => guard(async () => {
 
 let tgQuery = "";
 $("chat").onchange = () => guard(loadTgFiles);
+let chatSearchTimer;
+$("chatSearch").oninput = (e) => { clearTimeout(chatSearchTimer); chatSearchTimer = setTimeout(() => filterChats(e.target.value), 250); };
 $("tgSearch").oninput = (e) => {
   filterList("tgFiles", e.target.value);
   // Cleared the box after a full-chat search: show the latest files again.
