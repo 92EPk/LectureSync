@@ -1,7 +1,7 @@
 {
   "name": "lecturesync",
   "productName": "LectureSync",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Zero-bandwidth desktop orchestrator that moves lecture archives from Telegram to Google Drive via ephemeral Colab compute.",
   "author": "Ahmed Omran <B9x@outlook.com>",
   "homepage": "https://github.com/92EPK/LectureSync",
