@@ -1672,9 +1672,9 @@ def _video_codec() -> list[str]:
         except Exception:
             _NVENC = False
     if _NVENC:
-        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
-    # CRF 22 is visually lossless for slides, faces and screen text; veryfast keeps it quick on Colab's CPU.
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "30", "-b:v", "0"]
+    # HandBrake-style lecture profile: full resolution, CRF 28 keeps slide text sharp at a much smaller size.
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28"]
 
 
 async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
@@ -1689,16 +1689,17 @@ async def _ffmpeg_shrink(job: Job, src: Path) -> Path:
         dur = float(json.loads(o or b"{}").get("format", {}).get("duration") or 0)
     except Exception:
         pass
-    # Already lean (~<700 kbps): re-encoding would burn minutes for almost no gain.
-    if dur and src.stat().st_size * 8 / dur < 700_000:
-        return src
+    youtube = job.platform == "youtube"
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+        "-map", "0:v:0", "-map", "0:a?",
         *_video_codec(), "-threads", "0", "-pix_fmt", "yuv420p",
         # Keep the original resolution; only YouTube jobs (where the user picked a quality) get a size cap.
-        *(["-vf", f"scale='min({MAX_W.get(job.quality, 1920)},iw)':-2"] if job.platform == "youtube" else []),
-        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-progress", "pipe:1", str(out),
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        *(["-vf", f"scale='min({MAX_W.get(job.quality, 1920)},iw)':-2"] if youtube else []),
+        # Direct links: copy the original audio untouched (no quality loss, no size bloat).
+        *(["-c:a", "aac", "-b:a", "128k"] if youtube else ["-c:a", "copy"]),
+        "-movflags", "+faststart", "-progress", "pipe:1", str(out),
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         while True:
             line = await proc.stdout.readline()
