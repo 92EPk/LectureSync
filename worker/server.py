@@ -353,6 +353,8 @@ async def resolve_link(body: LinkIn):
 
 @app.get("/drive/list", dependencies=auth)
 def drive_list(path: str = ""):
+    if is_ms(path):
+        return ms_list(path)
     base = safe_path(path)
     if not base.is_dir():
         raise HTTPException(status_code=404, detail="not a folder")
@@ -388,6 +390,9 @@ class RenameIn(BaseModel):
 
 @app.post("/drive/mkdir", dependencies=auth)
 def drive_mkdir(body: PathIn):
+    if is_ms(body.path):
+        ms_mkdir(body.path)
+        return {"ok": True}
     safe_path(body.path).mkdir(parents=True, exist_ok=False)
     return {"ok": True}
 
@@ -396,6 +401,9 @@ def drive_mkdir(body: PathIn):
 def drive_rename(body: RenameIn):
     if "/" in body.new_name or body.new_name in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="bad name")
+    if is_ms(body.path):
+        ms_rename(body.path, body.new_name)
+        return {"ok": True}
     src = safe_path(body.path)
     src.rename(src.with_name(body.new_name))
     return {"ok": True}
@@ -403,6 +411,9 @@ def drive_rename(body: RenameIn):
 
 @app.post("/drive/delete", dependencies=auth)
 def drive_delete(body: PathIn):
+    if is_ms(body.path):
+        ms_delete(body.path)
+        return {"ok": True}
     target = safe_path(body.path)
     if target == DRIVE_ROOT.resolve():
         raise HTTPException(status_code=400, detail="refusing to delete drive root")
@@ -467,6 +478,7 @@ class JobIn(BaseModel):
     password: str | None = None
     subfolder: bool = False
     rename: str | None = None
+    compress: bool = False
 
 
 def _public(j: Job) -> dict:
@@ -476,7 +488,7 @@ def _public(j: Job) -> dict:
 
 
 async def _enqueue(body: JobIn) -> Job:
-    safe_path(body.dest).mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(_check_dest, body.dest)
     if body.rename and ("/" in body.rename or body.rename.strip() in ("", ".", "..")):
         raise HTTPException(status_code=400, detail="bad name")
     job = Job(id=uuid.uuid4().hex[:10], **body.model_dump())
@@ -800,9 +812,13 @@ async def _run(job: Job) -> None:
                     name = job.rename.strip()
                 shutil.move(str(f), str(out / name))
 
+        if job.compress:
+            # Shrink before saving: lecture-profile ffmpeg for videos, 7z for other files.
+            for f in sorted(p for p in out.rglob("*") if p.is_file()):
+                await _shrink(job, f)
+
         job.state, job.speed = "uploading", 0.0
-        dest = safe_path(job.dest)
-        dest.mkdir(parents=True, exist_ok=True)
+        dest = _dest_dir(job)
         entries = list(out.iterdir())
         for i, e in enumerate(entries, 1):
             await asyncio.to_thread(shutil.move, str(e), str(unique(dest / e.name)))
@@ -845,7 +861,9 @@ async def _worker() -> None:
         job = JOBS.get(job_id)
         if job is None or job.state == "cancelled":
             continue
-        runner = {"upload": _run_upload, "link": _run_link}.get(job.kind, _run)
+        runner = {"upload": _run_upload, "link": _run_link, "copy": _run_copy}.get(job.kind, _run)
+        if is_ms(job.dest) and job.kind != "upload" and not (job.kind == "link" and job.to == "telegram"):
+            runner = _with_ms_push(runner)
         attempt = 0
         while True:
             task = asyncio.create_task(runner(job))
@@ -950,6 +968,16 @@ def _skipped_files(p: Path) -> int:
 
 @app.post("/drive/check-upload", dependencies=auth)
 async def check_upload(body: CheckIn):
+    if is_ms(body.path):
+        name, is_dir, sizes = await asyncio.to_thread(ms_info, body.path)
+        premium, limit = await _account_limit()
+        size, biggest = sum(sizes), max(sizes, default=0)
+        out = {"name": name, "is_dir": is_dir, "size": size, "file_count": len(sizes), "premium": premium,
+               "limit": limit, **split_plan(size, limit)}
+        if is_dir:
+            out.update(total_size=size, batch_needs_split=biggest > limit,
+                       batch_oversized=sum(1 for s in sizes if s > limit), skipped=0)
+        return out
     p = safe_path(body.path)
     if not p.exists():
         raise HTTPException(status_code=404, detail="not found in Drive")
@@ -978,19 +1006,23 @@ class UploadIn(BaseModel):
     mode: str = "archive"   # folders only: "archive" or "batch"
 
 
-async def _enqueue_upload(body: UploadIn, label: str = "") -> Job:
-    p = safe_path(body.path)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="not found in Drive")
-    is_dir = p.is_dir()
+async def _enqueue_upload(body: UploadIn, label: str = "", ms: tuple | None = None) -> Job:
+    if ms:
+        name, is_dir, sizes = ms
+        size = sum(sizes)
+    else:
+        p = safe_path(body.path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="not found in Drive")
+        name, is_dir = p.name, p.is_dir()
+        size = sum(f.stat().st_size for f in _folder_files(p)) if is_dir else p.stat().st_size
     if is_dir and body.mode not in ("archive", "batch"):
         raise HTTPException(status_code=400, detail="bad folder mode")
-    size = sum(f.stat().st_size for f in _folder_files(p)) if is_dir else p.stat().st_size
     job = Job(id=uuid.uuid4().hex[:10], chat_id=0, message_id=0,
               dest=label or body.target_title or body.target, kind="upload",
               src=body.path, target=body.target.strip(), split=body.split,
               mode=body.mode if is_dir else "file",
-              caption=body.caption, name=p.name + ("/" if is_dir else ""), size=size)
+              caption=body.caption, name=name + ("/" if is_dir else ""), size=size)
     gate = asyncio.Event()
     gate.set()
     GATES[job.id] = gate
@@ -1003,6 +1035,17 @@ async def _enqueue_upload(body: UploadIn, label: str = "") -> Job:
 async def create_upload(body: UploadIn):
     if not body.target.strip():
         raise HTTPException(status_code=400, detail="choose where to send the file")
+    if is_ms(body.path):
+        info = await asyncio.to_thread(ms_info, body.path)
+        if not info[2]:
+            raise HTTPException(status_code=400, detail="this folder has no files")
+        await _check_target(body.target.strip())
+        _, limit = await _account_limit()
+        sizes = info[2]
+        too_big = (sum(sizes) > limit if body.mode == "archive" else max(sizes) > limit) if info[1] else sizes[0] > limit
+        if too_big and not body.split:
+            raise HTTPException(status_code=409, detail="larger than Telegram allows; confirm splitting it into parts")
+        return _public(await _enqueue_upload(body, ms=info))
     p = safe_path(body.path)
     if not p.exists():
         raise HTTPException(status_code=404, detail="not found in Drive")
@@ -1192,23 +1235,26 @@ async def _run_upload(job: Job) -> None:
     c = client()
     if not c.is_connected():
         await c.connect()
-    src = safe_path(job.src)
-    if not src.exists():
+    from_ms = is_ms(job.src)
+    src = None if from_ms else safe_path(job.src)
+    if src is not None and not src.exists():
         raise RuntimeError("no longer exists in Drive")
-    if not src.is_dir() and _is_gdoc(src):
+    if src is not None and not src.is_dir() and _is_gdoc(src):
         raise RuntimeError(GDOC_MSG)
     try:
         entity = await _resolve_target(c, job.target)
     except Exception:
         raise RuntimeError(f"could not find the chat or user '{job.target}'")
     _, limit = await _account_limit()
-    is_dir = src.is_dir()
 
     work = SCRATCH / job.id
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir()
     gate = GATES[job.id]
     try:
+        if from_ms:
+            src = await _ms_fetch(job, job.src, work / "src")
+        is_dir = src.is_dir()
         # Build the list of (file, caption) pairs to send, zipping/splitting on Colab's disk first.
         items: list[tuple[Path, str]] = []
         if is_dir and job.mode == "batch":
@@ -1451,6 +1497,14 @@ async def inspect_link(body: LinkCheckIn):
         entries = [e for e in (info.get("entries") or []) if e]
         out.update(title=info.get("title") or "", playlist=bool(entries), count=len(entries) or 1)
         return out
+    if platform == "sharepoint" and ms_ready():
+        try:
+            it = await asyncio.to_thread(_ms_share, url)
+            out.update(title=it.get("name") or "", size=int(it.get("size") or 0), folder="folder" in it,
+                       count=(it.get("folder") or {}).get("childCount", 1) if "folder" in it else 1, signed_in=True)
+            return out
+        except Exception:
+            pass  # not reachable with this account: try it as a public link
     direct, _ = await asyncio.to_thread(resolve_url, url)
 
     def head():
@@ -1490,7 +1544,7 @@ async def _enqueue_link(body: LinkIn) -> Job:
     if not platform:
         raise HTTPException(status_code=400, detail="bad link")
     if body.to == "drive":
-        safe_path(body.dest).mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(_check_dest, body.dest)
         dest = body.dest
     else:
         if not body.target.strip():
@@ -1751,8 +1805,7 @@ async def _shrink(job: Job, f: Path) -> Path:
 async def _deliver(job: Job, f: Path, work: Path, folder: str, entity, limit: int) -> None:
     if job.to == "drive":
         job.state, job.progress, job.speed = "uploading", 0.0, 0.0
-        dest = safe_path(job.dest + ("/" + folder if folder else ""))
-        dest.mkdir(parents=True, exist_ok=True)
+        dest = _dest_dir(job, folder)
         await asyncio.to_thread(shutil.move, str(f), str(unique(dest / f.name)))
         return
     c = client()
@@ -1836,8 +1889,7 @@ async def _run_bundle(job: Job, urls: list[str], folder: str, work: Path, gate_o
     job.size = sum(x.stat().st_size for x in files)
     if job.to == "drive":
         job.state, job.progress, job.speed = "uploading", 0.0, 0.0
-        dest = safe_path(job.dest)
-        dest.mkdir(parents=True, exist_ok=True)
+        dest = _dest_dir(job)
         for x in files:
             await asyncio.to_thread(shutil.move, str(x), str(unique(dest / x.name)))
     else:
@@ -1916,6 +1968,8 @@ async def _run_link(job: Job) -> None:
                     f = await asyncio.to_thread(_ytdlp_download, job, u, item, i, len(urls), gate_ok, on_chunk)
                     if len(urls) == 1:
                         job.name = f.name
+                elif job.platform == "sharepoint" and ms_ready() and await _ms_link(job, u, item, entity, limit):
+                    continue  # whole share (file or folder tree) already delivered
                 else:
                     direct, _ = await asyncio.to_thread(resolve_url, u)
                     f = await asyncio.to_thread(_http_download, job, direct, item, gate_ok, on_chunk)
@@ -1938,6 +1992,600 @@ async def _run_link(job: Job) -> None:
         job.state, job.progress, job.speed = "done", 1.0, 0.0
         if failed:
             job.error = f"{failed} of {len(urls)} item(s) were skipped (private or removed)"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- Microsoft OneDrive / SharePoint
+# Microsoft Graph over plain HTTPS (no extra packages). Sign-in uses the OAuth device-code flow:
+# the user types a short code at microsoft.com/devicelogin, so no password ever reaches this worker.
+# Locations are written "ms:<drive id>/<folder path>"; "ms:" alone lists the user's libraries.
+import base64
+from datetime import datetime
+
+# Built-in public client ID so students can sign in with school accounts without registering an app
+# (their university usually blocks app registration). Settings can override it with a custom ID.
+MS_DEFAULT_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+MS_CLIENT_ID = os.environ.get("LS_MS_CLIENT_ID", "").strip() or MS_DEFAULT_CLIENT_ID
+MS_TENANT = "common"  # a custom single-tenant app needs its own tenant (e.g. "must.edu.eg")
+MS_AUTH = "https://login.microsoftonline.com/common/oauth2/v2.0"
+# Built-in app keeps SharePoint access; a custom app asks only for the user's own files,
+# which students may grant without admin approval.
+MS_SCOPES_FULL = "offline_access User.Read Files.ReadWrite.All Sites.Read.All"
+MS_SCOPES_LIGHT = "offline_access User.Read Files.ReadWrite"
+MS_SCOPES = MS_SCOPES_FULL
+GRAPH = "https://graph.microsoft.com/v1.0"
+MS_CHUNK = 320 * 1024 * 32       # 10 MiB; upload sessions need multiples of 320 KiB
+MS_SMALL = 4 * MIB               # below this a single PUT is enough
+MS: dict = {"access": "", "refresh": "", "exp": 0.0, "user": "", "flow": None, "roots": None, "labels": {}}
+
+
+class MsError(RuntimeError):
+    def __init__(self, code: int, msg: str):
+        super().__init__(msg)
+        self.code = code
+
+
+def is_ms(path: str | None) -> bool:
+    return bool(path) and path.startswith("ms:")
+
+
+def ms_ready() -> bool:
+    return bool(MS["refresh"] or MS["access"])
+
+
+def _form_post(url: str, data: dict) -> dict:
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode(),
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {"error": f"http {e.code}"}
+
+
+def _ms_store(r: dict) -> None:
+    MS["access"] = r["access_token"]
+    MS["refresh"] = r.get("refresh_token") or MS["refresh"]
+    MS["exp"] = time.time() + int(r.get("expires_in") or 3600)
+
+
+def _ms_token() -> str:
+    if not ms_ready():
+        raise MsError(428, "Microsoft account not connected — press 'Connect Microsoft' first")
+    if time.time() > MS["exp"] - 120:
+        r = _form_post(f"{MS_AUTH}/token", {"client_id": MS_CLIENT_ID, "grant_type": "refresh_token",
+                                             "refresh_token": MS["refresh"], "scope": MS_SCOPES})
+        if "access_token" not in r:
+            MS.update(access="", refresh="")
+            raise MsError(428, "Microsoft sign-in expired — connect your Microsoft account again")
+        _ms_store(r)
+    return MS["access"]
+
+
+def _g(method: str, path: str, body=None, data: bytes | None = None, headers: dict | None = None,
+       signed: bool = True) -> dict:
+    """One Graph call with retries on throttling / transient errors."""
+    url = path if path.startswith("http") else GRAPH + path
+    for attempt in range(5):
+        h = {"Authorization": f"Bearer {_ms_token()}"} if signed else {}
+        h.update(headers or {})
+        payload = data
+        if body is not None:
+            payload = json.dumps(body).encode()
+            h["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=payload, method=method, headers=h)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                raw = r.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 4:
+                time.sleep(int(e.headers.get("Retry-After") or 0) or 2 ** attempt)
+                continue
+            if e.code == 401 and signed and attempt == 0:
+                MS["exp"] = 0  # token revoked or expired early: refresh once
+                continue
+            try:
+                msg = (json.loads(e.read()).get("error") or {}).get("message") or ""
+            except Exception:
+                msg = ""
+            if e.code == 404:
+                msg = "not found in OneDrive/SharePoint"
+            elif e.code == 403:
+                msg = "forbidden — your Microsoft account has no access here"
+            raise MsError(e.code, f"Microsoft: {msg or 'HTTP ' + str(e.code)}")
+        except urllib.error.URLError:
+            if attempt == 4:
+                raise
+            time.sleep(2 ** attempt)
+    raise MsError(503, "Microsoft is not answering, try again")
+
+
+def _ms_http(e: Exception) -> HTTPException:
+    return HTTPException(status_code=getattr(e, "code", 400) if isinstance(e, MsError) else 400, detail=str(e))
+
+
+def _ms_split(path: str) -> tuple[str, str]:
+    d, _, rel = path[3:].strip("/").partition("/")
+    return d, rel.strip("/")
+
+
+def _ms_item(d: str, rel: str) -> str:
+    return f"/drives/{d}/root" + (f":/{urllib.parse.quote(rel)}:" if rel else "")
+
+
+def _ms_label(d: str) -> str:
+    if d not in MS["labels"]:
+        try:
+            MS["labels"][d] = _g("GET", f"/drives/{d}?$select=name").get("name") or "Library"
+        except MsError:
+            MS["labels"][d] = "Library"
+    return MS["labels"][d]
+
+
+def _ms_roots() -> list[dict]:
+    """My OneDrive plus every SharePoint document library the user can reach."""
+    if MS["roots"] is None:
+        roots = []
+        me = _g("GET", "/me/drive?$select=id,name")
+        MS["labels"][me["id"]] = "My OneDrive"
+        roots.append({"name": "My OneDrive", "id": me["id"]})
+        try:
+            sites = _g("GET", "/sites?search=*&$top=40&$select=id,displayName,name").get("value", [])
+        except MsError:
+            sites = []  # personal Microsoft accounts have no SharePoint
+        for s in sites:
+            try:
+                drives = _g("GET", f"/sites/{s['id']}/drives?$select=id,name").get("value", [])
+            except MsError:
+                continue
+            for dr in drives:
+                label = f"{s.get('displayName') or s.get('name') or 'Site'} — {dr.get('name') or 'Documents'}"
+                MS["labels"][dr["id"]] = label
+                roots.append({"name": label, "id": dr["id"]})
+        MS["roots"] = roots
+    return MS["roots"]
+
+
+def _ms_ts(s: str | None) -> float:
+    try:
+        return datetime.fromisoformat((s or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def ms_list(path: str) -> dict:
+    try:
+        d, rel = _ms_split(path)
+        if not d:
+            items = [{"name": r["name"], "dir": True, "size": 0, "modified": 0, "path": f"ms:{r['id']}", "library": True}
+                     for r in _ms_roots()]
+            return {"path": "ms:", "items": items, "mounted": True, "provider": "ms", "label": "", "user": MS["user"]}
+        items, url = [], _ms_item(d, rel) + "/children?$top=999&$select=name,size,folder,file,lastModifiedDateTime"
+        while url:
+            r = _g("GET", url)
+            for c in r.get("value", []):
+                if "folder" not in c and "file" not in c:
+                    continue  # OneNote notebooks and other non-file items
+                items.append({"name": c["name"], "dir": "folder" in c, "size": 0 if "folder" in c else c.get("size", 0),
+                              "modified": _ms_ts(c.get("lastModifiedDateTime"))})
+            url = r.get("@odata.nextLink")
+    except MsError as e:
+        raise _ms_http(e)
+    items.sort(key=lambda x: (not x["dir"], x["name"].lower()))
+    return {"path": f"ms:{d}" + (f"/{rel}" if rel else ""), "items": items, "mounted": True,
+            "provider": "ms", "label": _ms_label(d), "user": MS["user"]}
+
+
+def _ms_need_folder(path: str) -> tuple[str, str]:
+    d, rel = _ms_split(path)
+    if not d:
+        raise HTTPException(status_code=400, detail="open My OneDrive or a SharePoint library first")
+    return d, rel
+
+
+def ms_mkdir(path: str) -> None:
+    d, rel = _ms_need_folder(path)
+    parent, _, name = rel.rpartition("/")
+    if not name:
+        raise HTTPException(status_code=400, detail="bad name")
+    try:
+        _g("POST", _ms_item(d, parent) + "/children",
+           body={"name": name, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"})
+    except MsError as e:
+        raise _ms_http(e)
+
+
+def _ms_mkdirs(d: str, rel: str) -> None:
+    """Create every folder of rel (inside drive d) that does not exist yet."""
+    parts = [p for p in rel.split("/") if p]
+    for i in range(len(parts)):
+        try:
+            _g("POST", _ms_item(d, "/".join(parts[:i])) + "/children",
+               body={"name": parts[i], "folder": {}, "@microsoft.graph.conflictBehavior": "fail"})
+        except MsError as e:
+            if e.code != 409:  # 409 = already there
+                raise
+
+
+def ms_rename(path: str, new_name: str) -> None:
+    d, rel = _ms_need_folder(path)
+    if not rel:
+        raise HTTPException(status_code=400, detail="libraries can't be renamed here")
+    try:
+        _g("PATCH", _ms_item(d, rel), body={"name": new_name})
+    except MsError as e:
+        raise _ms_http(e)
+
+
+def ms_delete(path: str) -> None:
+    d, rel = _ms_need_folder(path)
+    if not rel:
+        raise HTTPException(status_code=400, detail="refusing to delete a whole library")
+    try:
+        _g("DELETE", _ms_item(d, rel))  # goes to the OneDrive / SharePoint recycle bin
+    except MsError as e:
+        raise _ms_http(e)
+
+
+def _ms_tree(d: str, item: dict, prefix: str) -> list[tuple[str, int, str, str]]:
+    """Every file under item as (relative path, size, drive id, item id)."""
+    if "file" in item:
+        return [(prefix, int(item.get("size") or 0), d, item["id"])]
+    if "folder" not in item:
+        return []
+    out, url = [], f"/drives/{d}/items/{item['id']}/children?$top=999"
+    while url:
+        r = _g("GET", url)
+        for c in r.get("value", []):
+            cd = (c.get("parentReference") or {}).get("driveId") or d
+            out += _ms_tree(cd, c, f"{prefix}/{c['name']}" if prefix else c["name"])
+        url = r.get("@odata.nextLink")
+    return out
+
+
+def _ms_get(path: str) -> tuple[str, dict]:
+    d, rel = _ms_need_folder(path)
+    return d, _g("GET", _ms_item(d, rel))
+
+
+def ms_info(path: str) -> tuple[str, bool, list[int]]:
+    """(name, is folder, size of every file inside) for the size checks before sending."""
+    try:
+        d, item = _ms_get(path)
+        files = _ms_tree(d, item, item["name"])
+    except MsError as e:
+        raise _ms_http(e)
+    return item["name"], "folder" in item, [s for _, s, _, _ in files]
+
+
+def _ms_share(url: str) -> dict:
+    """A OneDrive / SharePoint sharing link -> its driveItem (works for files and whole folders)."""
+    token = "u!" + base64.urlsafe_b64encode(url.strip().encode()).decode().rstrip("=")
+    return _g("GET", f"/shares/{token}/driveItem")
+
+
+def _gate_blocker(job: Job):
+    gate = GATES[job.id]
+
+    def gate_ok() -> None:
+        while not gate.is_set() and job.state != "cancelled":
+            job.speed = 0.0
+            time.sleep(0.5)
+        if job.state == "cancelled":
+            raise RuntimeError("cancelled")
+    return gate_ok
+
+
+async def _ms_fetch_item(job: Job, d: str, item: dict, into: Path) -> Path:
+    """Download a file or a whole folder tree from Microsoft onto Colab's disk; returns its local path."""
+    files = await asyncio.to_thread(_ms_tree, d, item, item["name"])
+    if not files and "folder" not in item:
+        raise RuntimeError("this item can't be downloaded (OneNote notebook or shortcut?)")
+    total = sum(s for _, s, _, _ in files)
+    if shutil.disk_usage(SCRATCH).free < total * 1.1:
+        raise RuntimeError(f"not enough Colab space, need ~{total * 1.1 / 1e9:.1f} GB")
+    into.mkdir(parents=True, exist_ok=True)
+    name, gate_ok = item["name"], _gate_blocker(job)
+    job.name, job.size = name + ("/" if "folder" in item else ""), total
+    done, t0 = 0, time.time()
+    for i, (rel, size, fd, iid) in enumerate(files, 1):
+        await _wait_if_paused(job, "downloading")
+        job.state = "downloading" + (f" {i}/{len(files)}" if len(files) > 1 else "")
+        target = into / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if size == 0:
+            target.touch()
+            continue
+        meta = await asyncio.to_thread(_g, "GET", f"/drives/{fd}/items/{iid}")
+        link = meta.get("@microsoft.graph.downloadUrl")
+        if not link:
+            raise RuntimeError(f"'{rel}' can't be downloaded (blocked by the owner?)")
+        tmp = into / f".part-{i}"
+        tmp.mkdir()
+
+        def on_chunk(n: int, _t: int, base=done) -> None:
+            job.progress = (base + n) / max(total, 1)
+            job.speed = (base + n) / max(time.time() - t0, 0.1)
+        f = await asyncio.to_thread(_http_download, job, link, tmp, gate_ok, on_chunk)
+        shutil.move(str(f), str(target))
+        shutil.rmtree(tmp, ignore_errors=True)
+        done += size
+    job.name, job.size = name + ("/" if "folder" in item else ""), total
+    out = into / name
+    out.mkdir(exist_ok=True) if "folder" in item and not out.exists() else None
+    return out
+
+
+async def _ms_fetch(job: Job, path: str, into: Path) -> Path:
+    try:
+        d, item = await asyncio.to_thread(_ms_get, path)
+    except HTTPException as e:
+        raise RuntimeError(e.detail)
+    return await _ms_fetch_item(job, d, item, into)
+
+
+def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -> None:
+    rel = f"{rel_parent}/{f.name}" if rel_parent else f.name
+    size = f.stat().st_size
+    if size <= MS_SMALL:
+        _g("PUT", _ms_item(d, rel) + "/content?@microsoft.graph.conflictBehavior=rename",
+           data=f.read_bytes(), headers={"Content-Type": "application/octet-stream"})
+        prog(size)
+        return
+    sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
+              body={"item": {"@microsoft.graph.conflictBehavior": "rename"}})
+    up, pos, sent, fails = sess["uploadUrl"], 0, 0, 0
+    with open(f, "rb") as fh:
+        while pos < size:
+            gate_ok()
+            fh.seek(pos)
+            chunk = fh.read(MS_CHUNK)
+            end = pos + len(chunk) - 1
+            try:
+                _g("PUT", up, data=chunk, signed=False,
+                   headers={"Content-Range": f"bytes {pos}-{end}/{size}", "Content-Length": str(len(chunk))})
+                pos, fails = end + 1, 0
+            except (MsError, urllib.error.URLError, TimeoutError):
+                fails += 1
+                if fails > 5:
+                    raise
+                time.sleep(2 * fails)
+                # Ask the session where it stopped and carry on from there.
+                nxt = (_g("GET", up, signed=False).get("nextExpectedRanges") or ["0-"])[0]
+                pos = int(nxt.split("-")[0])
+            prog(pos - sent)
+            sent = pos
+
+
+async def _ms_push(job: Job, entries: list[Path]) -> None:
+    """Upload local files/folders into the job's Microsoft destination, keeping the folder tree."""
+    d, base = _ms_split(job.dest)
+    files: list[tuple[Path, str]] = []
+    for e in entries:
+        if e.is_dir():
+            files += [(f, f.parent.relative_to(e.parent).as_posix()) for f in sorted(e.rglob("*")) if _readable(f)]
+        elif _readable(e):
+            files.append((e, ""))
+    if not files:
+        return
+    total = sum(f.stat().st_size for f, _ in files)
+    sent, t0, gate_ok, made = 0, time.time(), _gate_blocker(job), set()
+    job.progress, job.speed = 0.0, 0.0
+
+    def prog(n: int) -> None:
+        nonlocal sent
+        sent += n
+        job.progress = sent / max(total, 1)
+        job.speed = sent / max(time.time() - t0, 0.1)
+    for i, (f, sub) in enumerate(files, 1):
+        await _wait_if_paused(job, "uploading")
+        job.state = "uploading to Microsoft" + (f" {i}/{len(files)}" if len(files) > 1 else "")
+        parent = "/".join(x for x in (base, sub) if x)
+        if sub and parent not in made:
+            await asyncio.to_thread(_ms_mkdirs, d, parent)
+            made.add(parent)
+        await asyncio.to_thread(_ms_upload_file, job, f, d, parent, prog, gate_ok)
+
+
+def _ms_staging(job: Job) -> Path:
+    return SCRATCH / f"ms-{job.id}"
+
+
+def _dest_dir(job: Job, sub: str = "") -> Path:
+    """Local folder a pipeline drops its results into: Drive itself, or a staging area for Microsoft."""
+    if is_ms(job.dest):
+        p = _ms_staging(job) / sub if sub else _ms_staging(job)
+    else:
+        p = safe_path(job.dest + ("/" + sub if sub else ""))
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _with_ms_push(runner):
+    """Run a normal pipeline into the staging folder, then upload the result to OneDrive/SharePoint."""
+    async def run(job: Job) -> None:
+        st = _ms_staging(job)
+        shutil.rmtree(st, ignore_errors=True)
+        try:
+            await runner(job)
+            if st.exists():
+                await _ms_push(job, sorted(st.iterdir()))
+            job.state, job.progress, job.speed = "done", 1.0, 0.0
+        finally:
+            shutil.rmtree(st, ignore_errors=True)
+    return run
+
+
+def _check_dest(dest: str) -> None:
+    if is_ms(dest):
+        d, rel = _ms_split(dest)
+        if not d:
+            raise HTTPException(status_code=400, detail="open My OneDrive or a SharePoint library first")
+        try:
+            item = _g("GET", _ms_item(d, rel) + "?$select=folder")
+        except MsError as e:
+            raise _ms_http(e)
+        if "folder" not in item:
+            raise HTTPException(status_code=400, detail="not a folder")
+    else:
+        safe_path(dest).mkdir(parents=True, exist_ok=True)
+
+
+# ---- sign-in
+
+async def _ms_poll(flow: dict) -> None:
+    while time.time() < flow["expires"] and MS["flow"] is flow:
+        await asyncio.sleep(flow["interval"])
+        r = await asyncio.to_thread(_form_post, f"{MS_AUTH}/token", {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "client_id": MS_CLIENT_ID, "device_code": flow["device_code"]})
+        if "access_token" in r:
+            _ms_store(r)
+            MS["roots"], MS["labels"] = None, {}
+            try:
+                me = await asyncio.to_thread(_g, "GET", "/me?$select=displayName,mail,userPrincipalName")
+                MS["user"] = me.get("mail") or me.get("userPrincipalName") or me.get("displayName") or ""
+            except Exception:
+                MS["user"] = ""
+            flow["state"] = "connected"
+            return
+        err = r.get("error")
+        if err == "authorization_pending":
+            continue
+        if err == "slow_down":
+            flow["interval"] += 5
+            continue
+        flow["state"] = "error"
+        flow["error"] = (r.get("error_description") or err or "sign-in failed").split("\r\n")[0]
+        return
+    if flow["state"] == "pending":
+        flow["state"], flow["error"] = "error", "the code expired — start again"
+
+
+@app.get("/ms/status", dependencies=auth)
+def ms_status():
+    f = MS["flow"]
+    return {"configured": bool(MS_CLIENT_ID), "connected": ms_ready(), "user": MS["user"],
+            "flow": {"state": f["state"], "error": f.get("error", "")} if f else None}
+
+
+@app.post("/ms/auth/start", dependencies=auth)
+async def ms_auth_start():
+    if not MS_CLIENT_ID:
+        raise HTTPException(status_code=428, detail="Microsoft sign-in is not set up in this engine yet (missing app ID)")
+    r = await asyncio.to_thread(_form_post, f"{MS_AUTH}/devicecode", {"client_id": MS_CLIENT_ID, "scope": MS_SCOPES})
+    if "device_code" not in r:
+        raise HTTPException(status_code=400, detail=(r.get("error_description") or r.get("error") or "Microsoft refused").split("\r\n")[0])
+    flow = {"device_code": r["device_code"], "interval": int(r.get("interval") or 5),
+            "expires": time.time() + int(r.get("expires_in") or 900), "state": "pending"}
+    MS["flow"] = flow
+    asyncio.create_task(_ms_poll(flow))
+    return {"user_code": r["user_code"], "verification_uri": r.get("verification_uri") or "https://microsoft.com/devicelogin",
+            "expires_in": int(r.get("expires_in") or 900)}
+
+
+class MsConfigIn(BaseModel):
+    client_id: str
+    tenant: str = ""
+
+
+@app.post("/ms/configure", dependencies=auth)
+def ms_configure(body: MsConfigIn):
+    """The desktop app hands over the Microsoft app ID (kept on the PC), like the Telegram keys."""
+    global MS_CLIENT_ID, MS_TENANT, MS_AUTH, MS_SCOPES
+    cid = body.client_id.strip() or MS_DEFAULT_CLIENT_ID
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", cid):
+        raise HTTPException(status_code=400, detail="the Microsoft app ID looks like 00000000-0000-0000-0000-000000000000")
+    tenant = body.tenant.strip().lower() or "common"
+    if not re.fullmatch(r"[a-z0-9.-]{1,100}", tenant):
+        raise HTTPException(status_code=400, detail="the organization looks like university.edu or a tenant ID")
+    if cid != MS_CLIENT_ID or tenant != MS_TENANT:
+        MS.update(access="", refresh="", exp=0.0, user="", flow=None, roots=None, labels={})
+    MS_CLIENT_ID, MS_TENANT = cid, tenant
+    MS_AUTH = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
+    MS_SCOPES = MS_SCOPES_FULL if cid == MS_DEFAULT_CLIENT_ID else MS_SCOPES_LIGHT
+    return {"ok": True}
+
+
+@app.post("/ms/logout", dependencies=auth)
+def ms_logout():
+    MS.update(access="", refresh="", exp=0.0, user="", flow=None, roots=None, labels={})
+    return {"ok": True}
+
+
+async def _ms_link(job: Job, url: str, work: Path, entity, limit: int) -> bool:
+    """Fetch a OneDrive/SharePoint sharing link with the signed-in account. False = fall back to public download."""
+    try:
+        it = await asyncio.to_thread(_ms_share, url)
+    except Exception:
+        return False
+    d = (it.get("parentReference") or {}).get("driveId")
+    if not d:
+        return False
+    local = await _ms_fetch_item(job, d, it, work / "ms")
+    files = [(f, f.parent.relative_to(local.parent).as_posix()) for f in sorted(local.rglob("*")) if f.is_file()] \
+        if local.is_dir() else [(local, "")]
+    for f, sub in files:
+        await _wait_if_paused(job, "downloading")
+        if job.compress:
+            f = await _shrink(job, f)
+        await _deliver(job, f, f.parent, sub, entity, limit)
+    return True
+
+
+# ---- cloud <-> cloud copies (Google Drive <-> OneDrive/SharePoint)
+
+class CopyIn(BaseModel):
+    src: str
+    dest: str
+
+
+@app.post("/copies", dependencies=auth)
+async def create_copy(body: CopyIn):
+    if is_ms(body.src) == is_ms(body.dest) and not is_ms(body.src):
+        raise HTTPException(status_code=400, detail="pick a OneDrive/SharePoint folder on one side")
+    if is_ms(body.src):
+        name, is_dir, sizes = await asyncio.to_thread(ms_info, body.src)
+    else:
+        p = safe_path(body.src)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="not found in Drive")
+        name, is_dir = p.name, p.is_dir()
+        sizes = [f.stat().st_size for f in _folder_files(p)] if is_dir else [p.stat().st_size]
+    await asyncio.to_thread(_check_dest, body.dest)
+    job = Job(id=uuid.uuid4().hex[:10], chat_id=0, message_id=0, dest=body.dest, kind="copy",
+              src=body.src, name=name + ("/" if is_dir else ""), size=sum(sizes))
+    gate = asyncio.Event()
+    gate.set()
+    GATES[job.id] = gate
+    JOBS[job.id] = job
+    await _queue.put(job.id)
+    return _public(job)
+
+
+async def _run_copy(job: Job) -> None:
+    await _wait_if_paused(job, "queued")
+    work = SCRATCH / job.id
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    try:
+        if is_ms(job.src):
+            local = await _ms_fetch(job, job.src, work / "src")
+        else:
+            local = safe_path(job.src)
+            if not local.exists():
+                raise RuntimeError("no longer exists in Drive")
+        if is_ms(job.dest) and not is_ms(job.src):
+            await _ms_push(job, [local])          # straight from the mounted Drive, no extra copy
+        else:
+            job.state, job.progress, job.speed = "copying", 0.0, 0.0
+            await asyncio.to_thread(shutil.move, str(local), str(unique(_dest_dir(job) / local.name)))
+        job.state, job.progress, job.speed = "done", 1.0, 0.0
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

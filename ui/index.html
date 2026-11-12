@@ -13,10 +13,15 @@
       <img src="assets/logo.png" alt="" />
       <div>
         <strong>LectureSync</strong>
-        <small>Telegram → Google Drive, through Colab</small>
+        <small>Telegram ⇄ Cloud, through Colab</small>
       </div>
     </div>
     <span id="status" class="pill">Not connected</span>
+    <div id="accounts" class="accounts hidden" aria-label="Connected accounts">
+      <span id="accTg" class="acc" title="Telegram">Telegram</span>
+      <span id="accG" class="acc" title="Google Drive">Google Drive</span>
+      <button id="accMs" class="acc" type="button" title="OneDrive / SharePoint">OneDrive · Sign in</button>
+    </div>
     <div id="disk" class="disk hidden">
       <span id="diskText"></span>
       <div class="meter"><i id="diskFill"></i></div>
@@ -54,6 +59,15 @@
             <button id="enterKeys" class="primary lg">Enter my keys</button>
             <button id="getKeys" class="ghost" data-icon="link">Get my keys</button>
           </div>
+          <details class="keys-help">
+            <summary>Need help getting API keys?</summary>
+            <ol>
+              <li>Open <b>my.telegram.org</b> and log in with your phone number.</li>
+              <li>Click <b>API development tools</b>.</li>
+              <li>Type any app title (e.g. <code>LectureSync</code>) and short name, then press <b>Create application</b>.</li>
+              <li>Copy <b>App api_id</b> and <b>App api_hash</b> into LectureSync. You only do this once.</li>
+            </ol>
+          </details>
           <p id="step1Done" class="done hidden">✓ Keys saved and encrypted</p>
         </div>
       </li>
@@ -126,21 +140,21 @@
 
   <!-- the actual workspace -->
   <div id="modeBar" class="modebar hidden" role="tablist">
-    <button class="mode on" data-mode="tg2drive" role="tab">📥 Telegram → Google Drive</button>
-    <button class="mode" data-mode="drive2tg" role="tab">📤 Google Drive → Telegram</button>
-    <button class="mode" data-mode="link" role="tab">🔗 Link → Drive / Telegram</button>
+    <button class="mode on" data-mode="tg2drive" role="tab">Telegram → Cloud</button>
+    <button class="mode" data-mode="drive2tg" role="tab">Cloud → Telegram</button>
+    <button class="mode" data-mode="link" role="tab">Web link</button>
   </div>
   <main id="workspace" class="workspace hidden">
     <section class="pane" id="tgPane">
       <div id="d2tInfo" class="d2t-info hidden">
         <h2 data-icon="send">Send to Telegram</h2>
-        <p>Tick files or folders in <b>Google Drive</b>, then press <b>Send to Telegram</b>.</p>
+        <p>Tick files or folders in <b class="cloudName">Google Drive</b>, then press <b>Send to Telegram</b>.</p>
         <p class="muted small">Everything travels from Colab straight to Telegram — your own internet isn't used.</p>
         <p class="muted small">Folders can go as one ZIP or file by file. Anything bigger than Telegram's limit (2 GB, or 4 GB with Premium) is split into parts only after you agree.</p>
       </div>
       <div id="linkBody" class="link-body hidden">
         <h2 data-icon="link">Import from a link</h2>
-        <p class="muted small">Public or "anyone with the link" shares only: SharePoint / OneDrive, Google Drive, Dropbox, MediaFire, YouTube (videos &amp; playlists) and direct file links.</p>
+        <p class="muted small">Public or "anyone with the link" shares only: SharePoint / OneDrive, Google Drive, Dropbox, MediaFire, YouTube (videos &amp; playlists), Telegram messages (t.me/…) and direct file links.</p>
         <div class="row tight link-row">
           <input id="linkUrl" placeholder="Paste a link (https://…)" />
           <button id="linkCheck" class="ghost small">Check</button>
@@ -167,8 +181,8 @@
           <p class="muted small dest-title">Where should it go?</p>
           <div class="dest-cards" role="radiogroup">
             <label class="dest-card"><input type="radio" name="linkTo" value="drive" checked />
-              <span class="dest-ico">📁</span><span class="dest-txt"><b>Google Drive</b><small>Save into the open folder</small></span></label>
-            <label class="dest-card"><input type="radio" name="linkTo" value="telegram" />
+              <span class="dest-ico">📁</span><span class="dest-txt"><b class="cloudName">Google Drive</b><small>Save into the open folder</small></span></label>
+            <label class="dest-card" id="linkToTgCard"><input type="radio" name="linkTo" value="telegram" />
               <span class="dest-ico">✈️</span><span class="dest-txt"><b>Telegram</b><small>Send to a chat or channel</small></span></label>
           </div>
           <p id="linkDriveNote" class="muted small"></p>
@@ -180,7 +194,7 @@
             </div>
             <p id="linkTargetErr" class="small combo-err hidden"></p>
           </div>
-          <label class="check"><input type="checkbox" id="linkCompress" /> Compress before uploading
+          <label class="check" id="linkCompressRow"><input type="checkbox" id="linkCompress" /> Compress before uploading
             <small class="muted">— Reduces video size up to 70% without losing slide clarity; archives documents with 7-Zip. Skips already-compressed files (PDF, JPG, ZIP).</small>
           </label>
           <div class="row end link-action-row">
@@ -193,12 +207,8 @@
         <h2 data-icon="send">Telegram</h2>
         <button id="refreshTg" class="ghost small" title="Refresh" data-icon="refresh"></button>
       </div>
-      <input id="chatSearch" class="search" type="search" autocomplete="off" placeholder="Search chats &amp; channels…" />
+      <input id="chatSearch" class="search" type="search" autocomplete="off" placeholder="Search chats &amp; channels… (press /)" />
       <select id="chat"></select>
-      <div class="row tight link-row">
-        <input id="tgLink" placeholder="Paste a Telegram message link (t.me/…)" />
-        <button id="tgLinkGo" class="ghost small" data-icon="link">Fetch</button>
-      </div>
       <input id="tgSearch" class="search" type="search" placeholder="Search files by name… (Enter searches the whole chat)" />
       <div id="kindFilter" class="chips">
         <button class="chip on" data-kind="all">All</button>
@@ -227,8 +237,13 @@
 
     <section class="pane wide" id="drivePane">
       <div class="pane-head">
-        <h2 data-icon="drive">Google Drive</h2>
+        <h2 data-icon="drive" id="cloudTitle">Google Drive</h2>
         <div class="row tight">
+          <div class="seg" role="tablist" aria-label="Cloud">
+            <button id="provG" class="seg-btn on" type="button">Google Drive</button>
+            <button id="provMs" class="seg-btn" type="button">OneDrive / SharePoint</button>
+          </div>
+          <button id="msAccount" class="ghost small hidden" title="Microsoft account"></button>
           <button id="up" class="ghost small" data-icon="up">Up</button>
           <button id="refreshDrive" class="ghost small" title="Refresh" data-icon="refresh">Refresh</button>
           <button id="mkdir" class="ghost small" data-icon="plus">New folder</button>
@@ -239,12 +254,13 @@
         Google Drive is not connected in Colab, so nothing shows here. Open the Colab page, run the cell again and press
         <b>Connect to Google Drive</b>, then allow access. After that press <b>Refresh</b>.
       </div>
-      <input id="driveSearch" class="search" type="search" placeholder="Search in this folder…" />
+      <input id="driveSearch" class="search" type="search" placeholder="Search in this folder… (Ctrl+F)" />
       <div id="driveSelBar" class="selbar hidden">
         <span id="driveSelCount"></span>
         <div class="row tight">
           <button id="driveSelAll" class="ghost small">Select all</button>
           <button id="driveSelClear" class="ghost small">Unselect</button>
+          <button id="driveSelCopy" class="ghost small" data-icon="copy" title="Copy to the folder last opened in the other cloud">Copy to other cloud</button>
           <button id="driveSelSend" class="primary small" data-icon="send">Send to Telegram</button>
         </div>
       </div>
@@ -255,10 +271,11 @@
 
     <div class="splitter" data-split="1" title="Drag to resize"></div>
 
-    <section class="pane">
+    <section class="pane jobs-pane" id="jobsPane">
       <div class="pane-head">
-        <h2 data-icon="jobs">Jobs</h2>
+        <h2 data-icon="jobs">Jobs <span id="jobsCount" class="count hidden"></span></h2>
         <div class="row tight">
+          <button id="toggleJobs" class="ghost small" title="Collapse or expand the Jobs panel">Hide</button>
           <button id="openHistory" class="ghost small">History</button>
           <button id="clearJobs" class="ghost small">Clear finished</button>
         </div>
@@ -289,7 +306,7 @@
         <button type="button" class="stab on" data-tab="transfers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> Transfers</button>
         <button type="button" class="stab" data-tab="alerts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg> Alerts</button>
         <button type="button" class="stab" data-tab="window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> Window</button>
-        <button type="button" class="stab" data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg> Telegram</button>
+        <button type="button" class="stab" data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg> Accounts &amp; Keys</button>
       </nav>
       <section class="spane" data-pane="transfers">
         <div class="srow">
@@ -340,6 +357,17 @@
             <button type="button" id="saveKeys" class="primary">Save keys</button>
           </div>
         </div>
+        <div class="skeys">
+          <label>Custom Microsoft app ID <span class="muted">(optional — OneDrive / SharePoint work without it)</span>
+            <input id="msClientId" placeholder="Leave empty to use the built-in one" spellcheck="false" /></label>
+          <label>Organization domain <span class="muted">(needed with a custom app ID, e.g. must.edu.eg)</span>
+            <input id="msTenant" placeholder="university.edu" spellcheck="false" /></label>
+          <p class="muted small">Microsoft sign-in works out of the box, including university accounts. Only advanced users who registered their own app need to paste its Application (client) ID here.</p>
+          <div class="row">
+            <span class="grow"></span>
+            <button type="button" id="saveMs" class="primary">Save app ID</button>
+          </div>
+        </div>
       </section>
 
       <footer class="sfoot">
@@ -356,7 +384,7 @@
       <h3>LectureSync</h3>
       <p id="aboutVer" class="muted"></p>
       <div class="about-badge">🎓 Student initiative · FGSSR, Cairo University</div>
-      <p>Pulls lecture recordings from Telegram, extracts them on Google Colab and puts them straight into Google Drive — without using your home internet.</p>
+      <p>Pulls lecture recordings from Telegram, extracts them on Google Colab and puts them straight into your cloud (Google Drive or OneDrive) — without using your home internet.</p>
       <p class="small">A free student initiative built by a Computer Science Diploma student at the Faculty of Graduate Studies for Statistical Research (FGSSR), Cairo University, to help fellow students move their lectures easily.</p>
       <dl>
         <dt>Author</dt><dd>Ahmed Omran</dd>
@@ -398,7 +426,7 @@
 
   <dialog id="sendDlg">
     <form method="dialog" class="send-form">
-      <h3>Send to Google Drive</h3>
+      <h3>Send to <span class="cloudName">Google Drive</span></h3>
       <p id="sendWhat" class="muted"></p>
       <label id="renameBox">Save as <input id="sendRename" /></label>
       <div id="archiveOpts">
@@ -407,6 +435,7 @@
         <label class="check"><input id="sendSub" type="checkbox" /> Always put the extracted files in their own folder</label>
         <label>Archive password <span class="muted">(only if it has one)</span> <input id="sendPw" type="password" /></label>
       </div>
+      <label class="check"><input id="sendCompress" type="checkbox" /> Compress before saving <span class="muted">(videos re-encoded with sharp slide text, other files packed with 7-Zip — the original is kept if it isn't smaller)</span></label>
       <div class="row end">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="ok" class="primary">Send</button>
@@ -434,6 +463,38 @@
       <div class="row end">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="ok" class="primary">Send</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="copyDlg">
+    <form method="dialog">
+      <h3>Copy to the other cloud</h3>
+      <p class="muted small">Files travel inside Google's datacenter, not over your internet.</p>
+      <div class="copy-route">
+        <div><small class="muted">From</small><b id="copyFrom"></b><span id="copyWhat" class="muted small"></span></div>
+        <div class="arrow">→</div>
+        <div><small class="muted">To</small><b id="copyTo"></b></div>
+      </div>
+      <p class="muted small">Want a different folder? Press <b>Choose folder</b>, open it on the right, then press <b>Copy to other cloud</b> again.</p>
+      <div class="row end">
+        <button type="button" id="copyCancel" class="ghost">Cancel</button>
+        <button type="button" id="copyPick" class="ghost">Choose folder</button>
+        <button value="ok" class="primary">Start copy</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="msDlg">
+    <form method="dialog" class="send-form">
+      <h3>Connect your Microsoft account</h3>
+      <p class="muted">1. Open the Microsoft page. 2. Type this code. 3. Sign in with your personal or university account.</p>
+      <div class="ms-code" id="msCode">…</div>
+      <p id="msState" class="muted small">Waiting for you to sign in…</p>
+      <div class="row end">
+        <button type="button" id="msCopy" class="ghost" data-icon="copy">Copy code</button>
+        <button type="button" id="msOpen" class="primary" data-icon="link">Open Microsoft page</button>
+        <button value="cancel" class="ghost">Close</button>
       </div>
     </form>
   </dialog>

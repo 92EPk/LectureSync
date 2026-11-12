@@ -253,7 +253,7 @@ function startColabExternal() {
 
 ipcMain.handle("config:get", () => {
   const c = readConfig();
-  return { url: c.url || "", apiId: c.apiId || "", hasApiHash: Boolean(c.apiHash), version: app.getVersion() };
+  return { url: c.url || "", apiId: c.apiId || "", hasApiHash: Boolean(c.apiHash), hasMsClientId: Boolean(c.msClientId), msClientId: c.msClientId || "", msTenant: c.msTenant || "", version: app.getVersion() };
 });
 ipcMain.handle("config:telegram", (_e, { apiId, apiHash }) => {
   writeConfig({ apiId: String(apiId).trim(), ...(apiHash ? { apiHash: apiHash.trim() } : {}) });
@@ -272,6 +272,14 @@ ipcMain.handle("telegram:configure", () => {
   if (!apiId || !apiHash) throw new Error("Add your Telegram API ID and API Hash in Settings first");
   return call("POST", "/telegram/configure", { api_id: Number(apiId), api_hash: apiHash });
 });
+ipcMain.handle("config:microsoft", (_e, clientId, tenant) => writeConfig({ msClientId: String(clientId || "").trim(), msTenant: String(tenant || "").trim() }));
+// Built-in public Microsoft app ID; sent whenever the user has no custom one,
+// so sign-in works even if the Colab engine is an older build without it.
+const MS_DEFAULT_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c";
+ipcMain.handle("microsoft:configure", () => {
+  const { msClientId, msTenant } = readConfig();
+  return call("POST", "/ms/configure", { client_id: msClientId || MS_DEFAULT_CLIENT_ID, tenant: msClientId ? msTenant || "" : "" });
+});
 ipcMain.handle("api", (_e, method, route, body) => call(method, route, body));
 ipcMain.handle("colab:start", () => startColab());
 // Fallback: classic copy/paste of the cell into the user's own notebook.
@@ -279,7 +287,7 @@ ipcMain.handle("colab:external", () => startColabExternal());
 ipcMain.handle("colab:copy", () => clipboard.writeText(buildCell(getToken())));
 ipcMain.handle("open", (_e, url) => {
   // Only the handful of links the UI actually shows.
-  if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com|cs-fgssr\.pages\.dev)/i.test(url)) shell.openExternal(url);
+  if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com|microsoft\.com\/devicelogin|login\.microsoft\.com\/device|entra\.microsoft\.com|cs-fgssr\.pages\.dev)/i.test(url)) shell.openExternal(url);
   else if (url.startsWith("mailto:B9x@outlook.com")) shell.openExternal(url);
 });
 ipcMain.handle("notify", (_e, title, body) => new Notification({ title, body }).show());

@@ -1,47 +1,42 @@
 <!doctype html>
-<html lang="en" dir="ltr" data-theme="dark">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LectureSync — Move lecture archives from Telegram to Google Drive, zero bandwidth</title>
-  <meta name="description" content="Free, open-source desktop app that moves multi-gigabyte lectures between Telegram, Google Drive and web links (OneDrive, YouTube, Dropbox) through your own Google Colab — without using your internet quota." />
-  <meta property="og:title" content="LectureSync — Zero-bandwidth Telegram → Drive" />
-  <meta property="og:description" content="A desktop control plane that offloads download, extraction and upload to ephemeral cloud compute. Windows, macOS, Linux." />
+  <title>LectureSync — Move lectures between Telegram, Drive and the web. Zero bandwidth.</title>
+  <meta name="description" content="Free, open-source desktop app that moves multi-gigabyte lectures between Telegram, Google Drive, OneDrive and web links through your own Google Colab — without touching your data plan." />
+  <meta property="og:title" content="LectureSync — Zero-bandwidth lecture transfers" />
+  <meta property="og:description" content="Telegram ⇄ Cloud ⇄ Web links, executed in your own Colab. Windows, macOS, Linux. MIT licensed." />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary" />
-  <meta name="theme-color" content="#07090c" />
+  <meta name="theme-color" content="#08090b" />
   <link rel="icon" href="assets/logo.png" />
-  <script>
-    (function () {
-      var t = localStorage.getItem("ls-theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-      document.documentElement.dataset.theme = t;
-    })();
-  </script>
+  <script>(function(){var t=localStorage.getItem("ls-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");document.documentElement.dataset.theme=t;})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
+  <div class="bg-grid" aria-hidden="true"></div>
   <header class="nav">
     <div class="wrap nav-in">
-      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="28" height="28" /> LectureSync</a>
+      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="24" height="24" />LectureSync</a>
       <nav class="links">
-        <a href="#problem">Why</a>
-        <a href="#how" data-i18n="nav.how">How it works</a>
-        <a href="#examples">Examples</a>
-        <a href="#features" data-i18n="nav.features">Features</a>
-        <a href="#start" data-i18n="nav.start">Get started</a>
-        <a href="#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="#modes">Modes</a>
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a href="#faq">FAQ</a>
       </nav>
       <div class="tools">
         <button id="themeBtn" class="icon-btn" aria-label="Toggle theme">
-          <svg class="sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-          <svg class="moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
         </button>
-        <a class="btn" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 3.87c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span>GitHub</span>
+        <a class="btn sm" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 3.87c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>Star</span><span id="stars" class="count">—</span>
         </a>
       </div>
     </div>
@@ -49,310 +44,196 @@
 
   <main id="top">
     <section class="hero wrap">
-      <p class="kicker"><span class="tag">🎓</span><span data-i18n="hero.kicker">Student initiative by Ahmed Omran · FGSSR, Cairo University</span></p>
-      <h1 data-i18n-html="hero.title">Gigabytes of lectures to Drive.<br/><span class="grad">Zero bytes from your data plan.</span></h1>
-      <p class="lead" data-i18n="hero.lead">LectureSync moves large lectures between Telegram and Google Drive — in both directions — and imports them from OneDrive, YouTube, Dropbox and other links, using your own Google Colab session. Downloading, extracting, compressing and uploading all happen in the cloud — your connection only sends a few kilobytes of commands.</p>
+      <a class="pill-link" href="https://github.com/92EPK/LectureSync/releases/latest" target="_blank" rel="noopener">
+        <span class="dot"></span><span id="relPill">New release</span><span class="sep"></span><span>Open source · MIT</span><span class="arr">→</span>
+      </a>
+      <h1>Your lectures move.<br/><em>Your data plan doesn’t.</em></h1>
+      <p class="lead">LectureSync is a desktop app that moves multi-gigabyte lectures between <b>Telegram</b>, <b>Google Drive</b>, <b>OneDrive</b> and <b>web links</b> — executed entirely inside your own Google Colab. Your connection only sends a few kilobytes of commands.</p>
       <div class="cta">
         <a id="primaryBtn" class="btn primary lg" href="https://github.com/92EPK/LectureSync/releases/latest">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
-          <span id="primaryLabel" data-i18n="hero.cta">Download</span>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+          <span id="primaryLabel">Download</span>
         </a>
-        <a class="btn ghost lg" href="#how" data-i18n="hero.cta2">How it works</a>
+        <a class="btn lg" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">View source</a>
       </div>
-      <p id="releaseMeta" class="meta">…</p>
-      <p class="other-os">Other systems:
-        <a href="#download" data-os-link="windows">Windows</a> ·
-        <a href="#download" data-os-link="mac">macOS</a> ·
-        <a href="#download" data-os-link="linux">Linux</a> ·
-        <a href="#download">All downloads ↓</a>
+      <p class="meta"><span id="releaseMeta">…</span></p>
+      <p class="other-os">Also available for
+        <a href="#download" data-os-link="windows">Windows</a><span>·</span>
+        <a href="#download" data-os-link="mac">macOS</a><span>·</span>
+        <a href="#download" data-os-link="linux">Linux</a>
       </p>
+    </section>
 
-      <div class="stage">
-        <div class="mock">
-          <div class="mock-bar"><i></i><i></i><i></i><span>LectureSync</span></div>
-          <div class="mtabs" role="tablist">
-            <button class="mtab on" data-m="0">📥 Telegram → Drive</button>
-            <button class="mtab" data-m="1">📤 Drive → Telegram</button>
-            <button class="mtab" data-m="2">🔗 Link → Drive / Telegram</button>
-          </div>
-          <div class="mpane on">
-            <div class="mrow"><label>Source chat</label><span class="fld">CS Diploma · Lectures</span><label>Save to</label><span class="fld">My Drive / FGSSR / Term 2</span></div>
-            <div class="job">
-              <div class="job-h"><span class="file">Lecture_07_Neural_Nets.part1–4.rar</span><span class="pill">4 parts</span></div>
-              <div class="stages"><div class="st done"><span>01</span>Download ✓</div><div class="st done"><span>02</span>Extract ✓</div><div class="st run"><span>03</span>Upload…</div></div>
-              <div class="bar"><i></i></div>
-              <div class="job-f"><span>Running in <b>Colab</b></span><span>Your network · idle</span></div>
-            </div>
-            <div class="job dim"><div class="job-h"><span class="file">Lecture_06_Clustering.zip → 📁 Lecture_06_Clustering/</span><span class="pill ok">✓ In Drive</span></div></div>
-          </div>
-          <div class="mpane">
-            <div class="mrow"><label>From Drive</label><span class="fld">☑ 📁 Data Mining</span><label>Send to</label><span class="fld">@cs_batch_2026</span></div>
-            <div class="opts"><span class="opt on">● One ZIP</span><span class="opt">○ File by file</span><span class="warn">⚠ Too large for one Telegram file — split into parts? <b>Yes</b></span></div>
-            <div class="job"><div class="job-h"><span class="file">Data_Mining.zip.001 … .004</span><span class="pill">part 3 / 4</span></div><div class="bar"><i></i></div><div class="job-f"><span>Uploading to <b>Telegram</b></span><span>Pause · Cancel</span></div></div>
-          </div>
-          <div class="mpane">
-            <div class="mrow wide"><label>Link</label><span class="fld mono">https://youtube.com/playlist?list=PL…</span></div>
-            <div class="found">✓ Found playlist: <b>Machine Learning Course</b></div>
-            <div class="opts"><span class="opt">Quality: <b>720p</b></span><span class="opt on">☑ Compress videos</span><span class="opt on">● One 7-Zip archive</span><span class="opt">○ Separate videos</span></div>
-            <div class="job"><div class="job-h"><span class="file">Machine_Learning_Course.7z</span><span class="pill">compressed</span></div><div class="bar"><i></i></div><div class="job-f"><span>Video 18 / 25 · compressing</span><span>→ Google Drive</span></div></div>
-          </div>
-        </div>
-        <p class="hint">↑ Click the tabs — these are the three real modes inside the app.</p>
+    <section id="modes" class="wrap showcase">
+      <div class="seg" role="tablist">
+        <button class="mtab on" data-m="0" role="tab"><span>01</span>Telegram → Cloud</button>
+        <button class="mtab" data-m="1" role="tab"><span>02</span>Cloud → Telegram</button>
+        <button class="mtab" data-m="2" role="tab"><span>03</span>Web link → Cloud / Telegram</button>
       </div>
-
-      <div class="stats">
-        <div><b>Light</b><span data-i18n="s1">only commands travel over your connection</span></div>
-        <div><b>No disk</b><span data-i18n="s2">files never touch your laptop</span></div>
-        <div><b>Faster</b><span data-i18n="s3">parallel downloads in the cloud</span></div>
-        <div><b>Everywhere</b><span data-i18n="s4">Windows, macOS and Linux</span></div>
+      <div class="window">
+        <div class="win-bar"><i></i><i></i><i></i><span>LectureSync</span></div>
+        <div class="mpane on">
+          <img class="th-dark" src="assets/app-tg2drive-dark.webp" alt="Telegram files, Google Drive folder and live jobs" width="2160" height="1290" />
+          <img class="th-light" src="assets/app-tg2drive-light.webp" alt="Telegram files, Google Drive folder and live jobs" width="2160" height="1290" />
+        </div>
+        <div class="mpane">
+          <img class="th-dark" src="assets/app-drive2tg-dark.webp" alt="Sending selected Drive folders to Telegram" width="2160" height="1290" loading="lazy" />
+          <img class="th-light" src="assets/app-drive2tg-light.webp" alt="Sending selected Drive folders to Telegram" width="2160" height="1290" loading="lazy" />
+        </div>
+        <div class="mpane">
+          <img class="th-dark" src="assets/app-link-dark.webp" alt="Importing a YouTube playlist from a link" width="2160" height="1290" loading="lazy" />
+          <img class="th-light" src="assets/app-link-light.webp" alt="Importing a YouTube playlist from a link" width="2160" height="1290" loading="lazy" />
+        </div>
+      </div>
+      <div class="captions">
+        <p class="mcap on">Pick a chat, tick split RAR parts and press <b>Send</b>. Colab downloads, extracts and saves them into Google Drive or OneDrive.</p>
+        <p class="mcap">Tick folders in your cloud and send them to any chat or channel — as one ZIP or file by file, split past Telegram’s 2 GB limit only if you agree.</p>
+        <p class="mcap">Paste a YouTube, OneDrive, Drive, Dropbox, MediaFire or <code>t.me/…</code> link. Optionally shrink videos and bundle playlists into one 7-Zip.</p>
       </div>
     </section>
 
-    <section id="problem" class="wrap section">
-      <div class="head">
-        <p class="eyebrow">The problem</p>
-        <h2>The usual way, every course costs you twice.</h2>
-        <p class="sub">To move a file from Telegram to Drive yourself, you download it, unzip it on your laptop, then upload it all over again. LectureSync makes a Google cloud machine do both — your internet only sends the "start" button.</p>
-      </div>
-      <div class="calc-out">
-        <div class="col bad"><h4>Doing it yourself</h4>
-          <p><span>Internet</span><b>Used twice</b></p>
-          <p><span>Laptop disk</span><b>Fills up</b></p>
-          <p><span>Laptop</span><b>Must stay on</b></p></div>
-        <div class="col good"><h4>With LectureSync</h4>
-          <p><span>Internet</span><b>Barely used</b></p>
-          <p><span>Laptop disk</span><b>Untouched</b></p>
-          <p><span>Laptop</span><b>Close it anytime</b></p></div>
-      </div>
-      <p class="fine">The cloud downloads, extracts and uploads for you — your laptop only presses start.</p>
+    <section class="wrap stats">
+      <div><b>0 MB</b><span>of your data plan used</span></div>
+      <div><b>0 GB</b><span>written to your disk</span></div>
+      <div><b>8×</b><span>parallel MTProto streams</span></div>
+      <div><b>$0</b><span>runs on Colab’s free tier</span></div>
     </section>
 
     <section id="how" class="wrap section">
       <div class="head">
-        <p class="eyebrow" data-i18n="how.eyebrow">How it works</p>
-        <h2 data-i18n="how.title">Your laptop is the remote. The cloud does the work.</h2>
-        <p class="sub" data-i18n="how.sub">The desktop app only gives instructions. A temporary Colab machine on your own Google account does all the heavy work, then shuts down.</p>
+        <p class="eyebrow">How it works</p>
+        <h2>A remote control for a <em>cloud machine.</em></h2>
+        <p class="sub">LectureSync splits the work in two. The app on your laptop only decides; your Colab session does all the heavy lifting on Google’s network.</p>
       </div>
-      <div class="routes" role="tablist">
-        <button class="route on" data-r="0" role="tab">📥 Telegram → Drive</button>
-        <button class="route" data-r="1" role="tab">📤 Drive → Telegram</button>
-        <button class="route" data-r="2" role="tab">🔗 Link → Drive / Telegram</button>
-      </div>
-      <div class="flow on" data-r="0">
-        <div class="node"><small>01 · From</small><b>Telegram</b><span>Any channel or group you can access — videos, PDFs, split RAR / 7z parts</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node accent"><small>02 · Cloud</small><b>Google Colab</b><span>Parallel download, joins &amp; extracts archives, optional video compression</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node"><small>03 · To</small><b>Google Drive</b><span>Lands neatly in the folder you choose</span></div>
-      </div>
-      <div class="flow" data-r="1">
-        <div class="node"><small>01 · From</small><b>Google Drive</b><span>Pick files or whole folders from your Drive</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node accent"><small>02 · Cloud</small><b>Google Colab</b><span>Zips folders and splits big files to fit Telegram's size limit</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node"><small>03 · To</small><b>Telegram</b><span>Uploaded in order to any chat, group or channel — pause or cancel anytime</span></div>
-      </div>
-      <div class="flow" data-r="2">
-        <div class="node"><small>01 · From</small><b>Any link</b><span>YouTube videos &amp; playlists, OneDrive / SharePoint, Dropbox, MediaFire, Drive or direct links</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node accent"><small>02 · Cloud</small><b>Google Colab</b><span>Downloads at cloud speed, picks quality, compresses or packs into one archive</span></div>
-        <div class="pipe"><i></i></div>
-        <div class="node"><small>03 · To</small><b>Drive or Telegram</b><span>You choose where it lands</span></div>
-      </div>
-      <div class="control">
-        <span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
-        <p><b data-i18n="ctl.b">Your computer</b> <span data-i18n="ctl.t">only sends commands and shows progress — nothing more.</span></p>
+      <div class="arch">
+        <div class="node">
+          <small>Control plane · your device</small>
+          <h3>LectureSync app</h3>
+          <p>Browse chats and folders, pick files, watch progress. Sends tiny JSON commands.</p>
+          <code>~ 4 KB per job</code>
+        </div>
+        <div class="link"><span>commands ↓</span><i></i><span>↑ progress</span></div>
+        <div class="node hot">
+          <small>Data plane · your Google Colab</small>
+          <h3>Transfer engine</h3>
+          <p>Downloads, extracts, compresses and uploads at datacenter speed. Disappears when you close it.</p>
+          <code>tens of MB/s</code>
+        </div>
+        <div class="link"><span>gigabytes</span><i></i><span>⇄</span></div>
+        <div class="node">
+          <small>Sources &amp; destinations</small>
+          <h3>Telegram · Drive · OneDrive · Web</h3>
+          <p>Files travel cloud-to-cloud and never pass through your home connection.</p>
+          <code>0 bytes on your line</code>
+        </div>
       </div>
       <div class="compare">
-        <table>
-          <thead><tr><th></th><th data-i18n="t.manual">The usual way</th><th>LectureSync</th></tr></thead>
-          <tbody>
-            <tr><td data-i18n="t.r1">Data used from your plan</td><td data-i18n="t.v1">≈ 2× the file size</td><td class="win">Almost nothing</td></tr>
-            <tr><td data-i18n="t.r2">Disk space needed</td><td data-i18n="t.v2">≈ 2× the file size</td><td class="win" data-i18n="t.none">None</td></tr>
-            <tr><td data-i18n="t.r3">Compressed archives</td><td data-i18n="t.man">Extract by hand</td><td class="win" data-i18n="t.auto">Extracted automatically</td></tr>
-            <tr><td data-i18n="t.r4">Telegram download speed</td><td data-i18n="t.single">One stream</td><td class="win" data-i18n="t.multi">Parallel streams</td></tr>
-          </tbody>
-        </table>
+        <div class="cmp">
+          <h4>Doing it yourself</h4>
+          <ul>
+            <li><span>Download 10 GB</span><b class="bad">10 GB</b></li>
+            <li><span>Extract on your laptop</span><b class="bad">+10 GB disk</b></li>
+            <li><span>Upload to Drive</span><b class="bad">10 GB</b></li>
+            <li class="tot"><span>Data plan burned</span><b class="bad">20 GB</b></li>
+          </ul>
+        </div>
+        <div class="cmp good">
+          <h4>With LectureSync</h4>
+          <ul>
+            <li><span>Press Send</span><b>4 KB</b></li>
+            <li><span>Colab downloads &amp; extracts</span><b>in the cloud</b></li>
+            <li><span>Colab uploads to Drive</span><b>in the cloud</b></li>
+            <li class="tot"><span>Data plan burned</span><b>≈ 0</b></li>
+          </ul>
+        </div>
       </div>
-    </section>
-
-    <section id="examples" class="wrap section">
-      <div class="head">
-        <p class="eyebrow">Real examples</p>
-        <h2>Four situations every student knows.</h2>
-        <p class="sub">Pick one to see exactly what you do, what happens in the cloud, and what you get at the end.</p>
-      </div>
-      <div class="xtabs">
-        <button class="xtab on" data-x="0"><b>Split RAR course</b><small>Telegram → Drive</small></button>
-        <button class="xtab" data-x="1"><b>YouTube playlist</b><small>Link → Drive</small></button>
-        <button class="xtab" data-x="2"><b>Professor's OneDrive</b><small>Link → Drive</small></button>
-        <button class="xtab" data-x="3"><b>Share a folder</b><small>Drive → Telegram</small></button>
-      </div>
-      <article class="xpane on">
-        <div class="xcol"><h4>😩 The situation</h4><p>Your batch channel has the full term as <code>Algorithms.part1.rar</code> … <code>part10.rar</code> — more than your laptop has room for, and more than your data plan can spare.</p>
-          <h4>👆 What you do</h4><ol><li>Open <b>Telegram → Drive</b>, pick the channel.</li><li>Tick the 10 parts, choose <code>Drive / Term 2</code>.</li><li>Press <b>Start</b>.</li></ol></div>
-        <div class="xcol"><h4>☁️ What happens in the cloud</h4><ul class="tl"><li>Downloads all parts in parallel</li><li>Joins &amp; extracts them with 7-Zip</li><li>Uploads the videos to your folder</li><li>Deletes the temporary files</li></ul></div>
-        <div class="xcol res"><h4>✅ Result in Drive</h4><pre class="tree">📁 Term 2
- └─ 📁 Algorithms
-     ├─ 🎬 Lec01_Intro.mp4
-     ├─ 🎬 Lec02_Sorting.mp4
-     ├─ …
-     └─ 📄 Slides.pdf</pre><div class="saved">Your data plan and disk <b>untouched</b></div></div>
-      </article>
-      <article class="xpane">
-        <div class="xcol"><h4>😩 The situation</h4><p>A 25-video Machine Learning course on YouTube in HD. You want it saved for offline study, but not eating half your Drive.</p>
-          <h4>👆 What you do</h4><ol><li>Paste the playlist link in <b>Link</b> and press <b>Check</b>.</li><li>Choose <b>720p</b>, tick <b>Compress videos</b>.</li><li>Choose <b>One 7-Zip archive</b> → Drive.</li></ol></div>
-        <div class="xcol"><h4>☁️ What happens in the cloud</h4><ul class="tl"><li>Downloads each video in 720p</li><li>Shrinks every video (slides stay sharp)</li><li>Packs all 25 into one archive</li><li>Uploads it to Drive</li></ul></div>
-        <div class="xcol res"><h4>✅ Result in Drive</h4><pre class="tree">📁 Courses
- └─ 🗜 Machine_Learning_Course.7z
-      (all 25 videos)</pre><div class="saved">Much <b>smaller</b> · prefer separate files? pick <i>Separate videos</i></div></div>
-      </article>
-      <article class="xpane">
-        <div class="xcol"><h4>😩 The situation</h4><p>The professor shared lab recordings on a OneDrive / SharePoint link. Downloading is slow and keeps stopping halfway.</p>
-          <h4>👆 What you do</h4><ol><li>Paste the link in <b>Link</b>.</li><li>Choose a Drive folder (or a Telegram chat).</li><li>Press <b>Start</b>.</li></ol></div>
-        <div class="xcol"><h4>☁️ What happens in the cloud</h4><ul class="tl"><li>Turns the share page into a direct download</li><li>Downloads at cloud speed — no stops</li><li>Optionally compresses the videos</li><li>Saves into your Drive</li></ul></div>
-        <div class="xcol res"><h4>✅ Result in Drive</h4><pre class="tree">📁 Labs
- ├─ 🎬 Lab_03_Recording.mp4
- └─ 🎬 Lab_04_Recording.mp4</pre><div class="saved">Also works with <b>Google Drive, Dropbox, MediaFire</b> and direct links</div></div>
-      </article>
-      <article class="xpane">
-        <div class="xcol"><h4>😩 The situation</h4><p>You collected a large "Data Mining" folder in Drive and want to share it with classmates on Telegram — but Telegram limits how big one file can be.</p>
-          <h4>👆 What you do</h4><ol><li>Open <b>Drive → Telegram</b>, tick the folder.</li><li>Choose the group and <b>One ZIP</b>.</li><li>Agree when it offers to split.</li></ol></div>
-        <div class="xcol"><h4>☁️ What happens in the cloud</h4><ul class="tl"><li>Pulls the folder from Drive</li><li>Zips it and splits it into parts</li><li>Uploads the parts in order</li><li>Shows progress — pause or cancel anytime</li></ul></div>
-        <div class="xcol res"><h4>✅ Result in Telegram</h4><pre class="tree">💬 CS Batch 2026
- ├─ 📦 Data_Mining.zip.001
- ├─ 📦 Data_Mining.zip.002
- └─ 📦 Data_Mining.zip.003</pre><div class="saved">Classmates open part <b>.001</b> and everything extracts together</div></div>
-      </article>
     </section>
 
     <section id="features" class="wrap section">
       <div class="head">
-        <p class="eyebrow" data-i18n="ft.eyebrow">Features</p>
-        <h2 data-i18n="ft.title">Made for slow connections and limited data plans.</h2>
+        <p class="eyebrow">Features</p>
+        <h2>Small app. <em>Serious engine.</em></h2>
       </div>
       <div class="bento">
-        <article class="cell big">
-          <div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></div>
-          <h3>Handles every file type smartly</h3>
-          <p>Archives are extracted automatically, multi-part archives get their own folder, and regular files are copied as they are. If extraction fails, the original file is uploaded instead.</p>
-          <div class="chips"><span>.zip</span><span>.rar</span><span>.7z</span><span>.tar</span><span>multi-part</span><span>.pdf</span><span>.mp4</span></div>
-        </article>
-        <article class="cell big">
-          <div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h13l-3-3M17 17H4l3 3"/></svg></div>
-          <h3>Both directions: Telegram ⇄ Drive</h3>
-          <p>Send lectures from Telegram to Drive, or pick files and folders in Drive and send them to any chat or channel. Large files are split into parts only after you agree.</p>
-          <div class="chips"><span>📥 Telegram → Drive</span><span>📤 Drive → Telegram</span><span>Auto split</span></div>
-        </article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></div><h3>Import from any link</h3><p>Paste a public link from OneDrive, Google Drive, Dropbox, MediaFire or YouTube and the cloud fetches it for you.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></div><h3>Smart compression</h3><p>Optional: lecture videos get much smaller while slides stay sharp — easier on your storage and data plan.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg></div><h3>Fast, resumable transfers</h3><p>Files are fetched in parallel, with live progress plus pause, resume, cancel and retry.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3h-3zM18 18h3v3h-3z"/></svg></div><h3>Sign in with a QR code</h3><p>Scan a code from the Telegram app — no waiting on SMS. Phone codes and two-step verification work too.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div><h3>Your keys, your accounts</h3><p>Runs on your own Google account and Telegram keys. No third-party server in between.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></div><h3>One notebook, every time</h3><p>The same Colab notebook is reused each session, so your Drive doesn't fill up with copies.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>Built-in Drive manager</h3><p>Browse, rename and organise your Drive folders without leaving the app.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div><h3>Playlists as one archive</h3><p>Save a whole course playlist as a single tidy archive, or keep videos separate.</p></article>
-        <article class="cell"><div class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18v14H3zM10 9l5 3-5 3z"/></svg></div><h3>Choose video quality</h3><p>Pick the resolution you need before anything is downloaded.</p></article>
+        <article class="b b-wide"><h3>Three modes, one workspace</h3><p>Telegram → Cloud, Cloud → Telegram and Web link → Cloud / Telegram, side by side with a live Jobs panel: speed, ETA, pause and stop.</p>
+          <div class="chips"><span>Telegram</span><span>Google Drive</span><span>OneDrive / SharePoint</span><span>YouTube</span><span>Dropbox</span><span>MediaFire</span><span>t.me links</span></div></article>
+        <article class="b"><h3>Parallel downloads</h3><p>8 concurrent MTProto streams with <code>tgcrypto</code> — from ~1.3 MB/s to tens of MB/s.</p></article>
+        <article class="b"><h3>Split archives, handled</h3><p>Tick every <code>.partN.rar</code>; they’re joined and extracted into the folder you’re viewing.</p></article>
+        <article class="b"><h3>Lecture-aware compression</h3><p>Videos shrink up to 70% at 480p, 720p or 1080p with slides still sharp. Documents go into 7-Zip.</p></article>
+        <article class="b"><h3>Send anywhere</h3><p>Search any chat, or type an <code>@username</code> or <code>t.me</code> link. Validated before the job starts.</p></article>
+        <article class="b b-wide"><h3>Zero custody</h3><p>Your Telegram keys are encrypted on your device. Files live in your own Google account. There is no LectureSync server — the developer never sees anything.</p></article>
       </div>
     </section>
 
     <section id="download" class="wrap section">
       <div class="head">
-        <p class="eyebrow" data-i18n="dl.eyebrow">Download</p>
-        <h2 data-i18n="dl.title">Free, for everyone.</h2>
-        <p class="sub" data-i18n="dl.sub">Every version is built automatically by GitHub Actions from the public source code.</p>
+        <p class="eyebrow">Download</p>
+        <h2>Free, for every desktop.</h2>
+        <p class="sub">Each release is built automatically by GitHub Actions from the public source code.</p>
       </div>
       <div class="platforms">
         <article class="card" data-os="windows">
-          <div class="card-h"><h3>Windows</h3><span class="badge" data-i18n="dl.yours">Your device</span></div>
+          <div class="card-h"><h3>Windows</h3><span class="badge">Your device</span></div>
           <p class="muted">10 / 11 · x64</p>
           <ul class="files" data-match="\.exe$"></ul>
-          <p class="note" data-i18n-html="dl.win">If SmartScreen appears: <b>More info → Run anyway</b></p>
+          <p class="note">SmartScreen? <b>More info → Run anyway</b></p>
         </article>
         <article class="card" data-os="mac">
-          <div class="card-h"><h3>macOS</h3><span class="badge" data-i18n="dl.yours">Your device</span></div>
+          <div class="card-h"><h3>macOS</h3><span class="badge">Your device</span></div>
           <p class="muted">11+ · Apple Silicon &amp; Intel</p>
           <ul class="files" data-match="\.dmg$|mac.*\.zip$"></ul>
-          <p class="note" data-i18n-html="dl.mac">Right-click → <b>Open</b>. If it says “damaged”: <code>xattr -cr /Applications/LectureSync.app</code></p>
+          <p class="note">“Damaged”? <code>xattr -cr /Applications/LectureSync.app</code></p>
         </article>
         <article class="card" data-os="linux">
-          <div class="card-h"><h3>Linux</h3><span class="badge" data-i18n="dl.yours">Your device</span></div>
+          <div class="card-h"><h3>Linux</h3><span class="badge">Your device</span></div>
           <p class="muted">x86-64 · AppImage / .deb</p>
           <ul class="files" data-match="\.AppImage$|\.deb$"></ul>
-          <p class="note"><code>chmod +x *.AppImage</code> · <code>sudo apt install ./LectureSync_*.deb</code></p>
+          <p class="note"><code>sudo apt install ./LectureSync_*.deb</code></p>
         </article>
       </div>
       <div class="dl-foot">
-        <details class="checks">
-          <summary data-i18n="dl.verify">Verify your download (SHA-256)</summary>
-          <pre id="sums">—</pre>
-        </details>
-        <a href="https://github.com/92EPK/LectureSync/releases" target="_blank" rel="noopener" data-i18n="dl.history">All releases &amp; notes →</a>
+        <details><summary>Verify your download (SHA-256)</summary><pre id="sums">—</pre></details>
+        <a href="https://github.com/92EPK/LectureSync/releases" target="_blank" rel="noopener">All releases &amp; notes →</a>
       </div>
     </section>
 
     <section id="start" class="wrap section">
-      <div class="head">
-        <p class="eyebrow" data-i18n="st.eyebrow">Get started</p>
-        <h2 data-i18n="st.title">Up and running in three steps.</h2>
-      </div>
+      <div class="head"><p class="eyebrow">Get started</p><h2>Running in three steps.</h2></div>
       <ol class="steps">
-        <li><span class="n">1</span><h3 data-i18n="st1.h">Get your Telegram keys</h3><p data-i18n-html="st1.p">Create an API ID and API Hash at <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> under “API development tools”. They're stored encrypted on your device.</p></li>
-        <li><span class="n">2</span><h3 data-i18n="st2.h">Start the Colab engine</h3><p data-i18n-html="st2.p">Open the <a href="https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb" target="_blank" rel="noopener">LectureSync notebook</a>, press Run, allow Drive access, then click <i>Connect to LectureSync</i>.</p></li>
-        <li><span class="n">3</span><h3 data-i18n="st3.h">Pick a mode and go</h3><p data-i18n="st3.p">Scan the QR code to sign in, then choose Telegram → Drive, Drive → Telegram, or paste a link — pick your files and destination and press start.</p></li>
+        <li><span>01</span><h3>Add Telegram keys</h3><p>Create an API ID and Hash at <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>. Stored encrypted on your device, once.</p></li>
+        <li><span>02</span><h3>Start the cloud engine</h3><p>The app opens the <a href="https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb" target="_blank" rel="noopener">Colab notebook</a>. Press Run, allow Drive, click Connect.</p></li>
+        <li><span>03</span><h3>Pick a mode and go</h3><p>Scan the QR code to sign in, choose files or paste a link, pick a destination, start.</p></li>
       </ol>
     </section>
 
-    <section id="faq" class="wrap section">
-      <div class="head center">
-        <p class="eyebrow" data-i18n="fq.eyebrow">FAQ</p>
-        <h2 data-i18n="fq.title">Common questions</h2>
-      </div>
+    <section id="faq" class="wrap section narrow">
+      <div class="head"><p class="eyebrow">FAQ</p><h2>Questions</h2></div>
       <div class="faq">
-        <details><summary data-i18n="q1">Is any of my data sent to the developer?</summary><p data-i18n="a1">No. Everything runs on your own Google account and Telegram keys. The developer has no server and never sees your files.</p></details>
-        <details><summary data-i18n="q2">Why does my system show a warning when installing?</summary><p data-i18n="a2">The app isn't digitally signed yet because signing certificates are paid. This warning appears for any unsigned app and doesn't mean a virus was found. You can verify the file with its SHA-256 checksum.</p></details>
-        <details><summary data-i18n="q3">Does it cost anything?</summary><p data-i18n="a3">No. It runs on Google Colab's free tier and is open source under the MIT license.</p></details>
-        <details><summary data-i18n="q4">Can I use it outside the university?</summary><p data-i18n="a4">Yes. It works with any Telegram channel or group you can access, and any Google Drive folder.</p></details>
-      </div>
-    </section>
-
-    <section class="wrap" id="initiative">
-      <div class="initiative">
-        <div class="init-badge">🎓 Student initiative</div>
-        <h2>Built by a student, for students.</h2>
-        <p>LectureSync is a free, open-source initiative designed and built by <b>Ahmed Omran</b>, a Computer Science Diploma student at the <b>Faculty of Graduate Studies for Statistical Research (FGSSR), Cairo University</b> — to help fellow students move their large lecture files to Google Drive without spending their home internet.</p>
-        <div class="init-meta">
-          <span><small>Author</small><b>Ahmed Omran</b></span>
-          <span><small>Faculty</small><b>FGSSR · Cairo University</b></span>
-          <span><small>Program</small><b>CS Diploma</b></span>
-          <a href="https://cs-fgssr.pages.dev/" target="_blank" rel="noopener"><small>Platform</small><b>cs-fgssr.pages.dev ↗</b></a>
-        </div>
+        <details><summary>Is any of my data sent to the developer?</summary><p>No. Everything runs on your own Google account and Telegram keys. There is no LectureSync server.</p></details>
+        <details><summary>Why does my system warn me when installing?</summary><p>The app isn’t code-signed yet. The warning appears for any unsigned app; you can verify every file with its SHA-256 checksum.</p></details>
+        <details><summary>Does it cost anything?</summary><p>No. It runs on Colab’s free tier and is MIT-licensed open source.</p></details>
+        <details><summary>Why does Google ask for Drive permission each session?</summary><p>Colab machines are temporary, and Google requires a fresh consent click every time a new one connects to your Drive. It’s a one-click step.</p></details>
+        <details><summary>Can I use it outside university?</summary><p>Yes — any chat you can access, any Drive or OneDrive folder, any public link.</p></details>
       </div>
     </section>
 
     <section class="wrap">
       <div class="final">
-        <h2 data-i18n="fin.title">Stop burning your data plan on downloads.</h2>
-        <p class="sub" data-i18n="fin.sub">Let the cloud do the heavy lifting.</p>
-        <div class="cta"><a class="btn primary lg" href="#download" data-i18n="fin.cta">Download LectureSync</a></div>
+        <p class="eyebrow">Student initiative · FGSSR, Cairo University</p>
+        <h2>Built by a student, <em>for students.</em></h2>
+        <p class="sub">Designed and built by <b>Ahmed Omran</b>, CS Diploma — so nobody has to burn their home internet on lecture files again.</p>
+        <div class="cta"><a class="btn primary lg" href="#download">Download LectureSync</a><a class="btn lg" href="https://cs-fgssr.pages.dev/" target="_blank" rel="noopener">cs-fgssr.pages.dev ↗</a></div>
       </div>
     </section>
   </main>
 
   <footer class="foot">
     <div class="wrap foot-in">
-      <div>
-        <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="24" height="24" /> LectureSync</a>
-        <p class="muted" data-i18n="foot.p">Designed and built by Ahmed Omran as a student initiative for the Computer Science Diploma, Faculty of Graduate Studies for Statistical Research, Cairo University.</p>
-      </div>
-      <nav>
-        <a href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener" data-i18n="ln.src">Source code</a>
-        <a href="https://github.com/92EPK/LectureSync/blob/main/SYSTEM_DESIGN.md" target="_blank" rel="noopener" data-i18n="ln.sd">System design</a>
-        <a href="https://github.com/92EPK/LectureSync/blob/main/LICENSE" target="_blank" rel="noopener" data-i18n="ln.lic">MIT License</a>
-        <a href="https://github.com/92EPK" target="_blank" rel="noopener">@92EPK</a>
-      </nav>
+      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="20" height="20" />LectureSync</a>
+      <span class="muted">© 2026 Ahmed Omran · MIT License</span>
+      <nav><a href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/92EPK/LectureSync/blob/main/SYSTEM_DESIGN.md" target="_blank" rel="noopener">System design</a><a href="https://github.com/92EPK/LectureSync/issues" target="_blank" rel="noopener">Issues</a></nav>
     </div>
   </footer>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("ls", {
   setUrl: (url) => ipcRenderer.invoke("config:url", url),
   disconnect: () => ipcRenderer.invoke("config:disconnect"),
   configureTelegram: () => ipcRenderer.invoke("telegram:configure"),
+  saveMicrosoft: (clientId, tenant) => ipcRenderer.invoke("config:microsoft", clientId, tenant),
+  configureMicrosoft: () => ipcRenderer.invoke("microsoft:configure"),
   api: (method, route, body) => ipcRenderer.invoke("api", method, route, body),
   startColab: () => ipcRenderer.invoke("colab:start"),
   startColabExternal: () => ipcRenderer.invoke("colab:external"),
