@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("ls", {
   checkUpdate: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: (url) => ipcRenderer.invoke("update:download", url),
   notify: (title, body) => ipcRenderer.invoke("notify", title, body),
+  setTheme: (t) => ipcRenderer.invoke("theme:set", t),
   setKeepAwake: (on) => ipcRenderer.invoke("power:keep-awake", Boolean(on)),
   setActive: (on) => ipcRenderer.invoke("jobs:active", Boolean(on)),
   setWindowPrefs: (p) => ipcRenderer.invoke("window:prefs", {
@@ -31,3 +32,5 @@ contextBridge.exposeInMainWorld("ls", {
   onStage: listen("colab:stage"),
   onLinkError: listen("colab:link-error"),
 });
+
+/*redesign-applied*/

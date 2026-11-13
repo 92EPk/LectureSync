@@ -2,6 +2,7 @@
 // Wrapped in a function so local names never collide with the `ls` global the preload exposes.
 (() => {
 const $ = (id) => document.getElementById(id);
+if (/Windows/.test(navigator.userAgent)) document.documentElement.classList.add("win");
 // If the bridge is missing, keep the page alive with a stub so every button still
 // gets wired; calls that need the main process then show a clear error instead.
 const bridgeMissing = !window.ls;
@@ -37,6 +38,14 @@ const seenDone = new Set();
 // ------------------------------------------------ small helpers
 
 const ICONS = {
+  cloud: '<path d="M17.5 19H8a5 5 0 1 1 1.6-9.7A6 6 0 0 1 21 12.5 3.5 3.5 0 0 1 17.5 19z"/>',
+  swap: '<path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
@@ -161,8 +170,8 @@ async function renderSetup() {
 
   const ready = connected && signedIn;
   $("onboarding").classList.toggle("hidden", ready);
-  $("workspace").classList.toggle("hidden", !ready);
-  $("modeBar").classList.toggle("hidden", !ready);
+  $("app").classList.toggle("hidden", !ready);
+  
   $("disconnect").classList.toggle("hidden", !connected);
   return hasKeys;
 }
@@ -201,8 +210,9 @@ async function refreshStatus() {
     $("accTg").textContent = signedIn ? "Telegram" : "Telegram · sign in";
     $("accG").classList.toggle("ok", Boolean(d.drive));
     $("accG").textContent = d.drive ? "Google Drive" : "Drive · not mounted";
-    $("diskText").textContent = `Colab disk · ${fmtSize(d.free)} free of ${fmtSize(d.total)}` +
-      (d.drive ? ` · Drive · ${fmtSize(d.drive.free)} free` : "");
+    $("diskText").textContent = `Colab ${fmtSize(d.free)} free` +
+      (d.drive ? ` · Drive · ${fmtSize(d.drive.free)} free` : "") +
+      (d.onedrive ? ` · OneDrive · ${fmtSize(d.onedrive.free)} free` : "");
     $("diskFill").style.width = `${Math.round((d.used / d.total) * 100)}%`;
     return h;
   } catch {
@@ -306,7 +316,7 @@ function copyBtn(text) {
   const ws = $("workspace");
   const saved = JSON.parse(localStorage.getItem("ls-cols") || "null");
   const apply = (c) => c.forEach((v, i) => ws.style.setProperty(`--c${i + 1}`, v + "fr"));
-  if (Array.isArray(saved) && saved.length === 3) apply(saved);
+  if (Array.isArray(saved) && saved.length === 2) apply(saved);
   for (const sp of ws.querySelectorAll(".splitter")) {
     sp.addEventListener("pointerdown", (e) => {
       e.preventDefault();
@@ -329,6 +339,33 @@ function copyBtn(text) {
     });
     sp.addEventListener("dblclick", () => { localStorage.removeItem("ls-cols"); ["--c1","--c2","--c3"].forEach((k) => ws.style.removeProperty(k)); });
   }
+})();
+
+// Vertical splitter above the Jobs drawer; height is remembered.
+(function initRowSplitter() {
+  const sp = $("jobsSplit"), ws = $("workspace");
+  if (!sp) return;
+  const set = (h) => ws.style.setProperty("--jobs-h", h + "px");
+  const saved = Number(localStorage.getItem("ls-jobs-h"));
+  if (saved) set(saved);
+  sp.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const h0 = $("jobsPane").getBoundingClientRect().height, y0 = e.clientY;
+    const max = ws.getBoundingClientRect().height - 220;
+    sp.setPointerCapture(e.pointerId);
+    sp.classList.add("dragging"); document.body.classList.add("resizing-v");
+    if (document.body.classList.contains("jobs-min")) $("toggleJobs").click();
+    const move = (ev) => {
+      const h = Math.round(Math.max(90, Math.min(max, h0 - (ev.clientY - y0))));
+      set(h); localStorage.setItem("ls-jobs-h", String(h));
+    };
+    const up = () => {
+      sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up);
+      sp.classList.remove("dragging"); document.body.classList.remove("resizing-v");
+    };
+    sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up);
+  });
+  sp.addEventListener("dblclick", () => { localStorage.removeItem("ls-jobs-h"); ws.style.removeProperty("--jobs-h"); });
 })();
 
 function applyKind() {
@@ -429,6 +466,8 @@ function showProvider(ms) {
   $("cloudTitle").textContent = ms ? "OneDrive / SharePoint" : "Google Drive";
   // Tab names and the link destination follow whichever cloud is open.
   for (const n of document.querySelectorAll(".cloudName")) n.textContent = ms ? "OneDrive" : "Google Drive";
+  const cur = document.querySelector('input[name="linkTo"]:checked');
+  if (cur && cur.value !== "telegram") document.querySelector(`input[name="linkTo"][value="${ms ? "ms" : "g"}"]`).checked = true;
 }
 
 // ------------------------------------------------ microsoft account
@@ -439,10 +478,10 @@ async function msRefreshBadge() {
   const s = await msStatus().catch(() => null);
   const b = $("msAccount");
   b.classList.toggle("hidden", !(s && s.connected) || !isMs(cwd));
-  if (s && s.connected) b.textContent = `${s.user || "Microsoft"} · Sign out`;
+  if (s && s.connected) { b.textContent = "Sign out"; b.title = (s.user || "Microsoft") + " · Sign out"; }
   const a = $("accMs");
   a.classList.toggle("ok", Boolean(s && s.connected));
-  a.textContent = s && s.connected ? `${s.user || "OneDrive"}` : "OneDrive · Sign in";
+  a.textContent = s && s.connected ? "OneDrive" : "OneDrive · Sign in";
   a.title = s && s.connected ? "OneDrive / SharePoint connected — click to open" : "Sign in to OneDrive / SharePoint";
   return s;
 }
@@ -556,25 +595,86 @@ async function loadDrive(path = cwd) {
 
 let driveItems = [];
 const driveSel = new Map(); // Drive path -> item
-let mode = ["drive2tg", "link"].includes(localStorage.getItem("ls-mode")) ? localStorage.getItem("ls-mode") : "tg2drive";
+let mode = ["drive2tg", "link", "c2c"].includes(localStorage.getItem("ls-mode")) ? localStorage.getItem("ls-mode") : "tg2drive";
 
 function renderDriveSel() {
   const on = mode === "drive2tg" && driveSel.size > 0;
-  $("driveSelBar").classList.toggle("hidden", mode !== "drive2tg");
+  $("driveSelBar").classList.toggle("hidden", !["drive2tg", "c2c"].includes(mode) && driveSel.size === 0);
+  $("driveSelSend").classList.toggle("hidden", mode !== "drive2tg");
   const files = [...driveSel.values()];
   const total = files.filter((f) => !f.dir).reduce((a, f) => a + (f.size || 0), 0);
   const dirs = files.filter((f) => f.dir).length;
   $("driveSelCount").textContent = driveSel.size
     ? `${driveSel.size} selected · ${fmtSize(total)}${dirs ? ` + ${dirs} folder${dirs > 1 ? "s" : ""}` : ""}`
-    : "Tick files or folders to send";
+    : mode === "drive2tg" ? "Tick files or folders to send" : mode === "c2c" ? "Tick files or folders to copy" : "Tick files or folders";
   $("driveSelSend").disabled = !on;
   $("driveSelClear").disabled = !driveSel.size;
+  renderC2c();
 }
+
+// ------------------------------------------------ cloud -> cloud
+var c2cPicking = null; // source cloud ("g"/"ms") while the user browses for a destination
+const cloudLabel = (k) => (k === "ms" ? "OneDrive" : "Google Drive");
+function renderC2c() {
+  if (!$("c2cBody")) return;
+  const src = c2cPicking || (isMs(cwd) ? "ms" : "g");
+  const dst = src === "ms" ? "g" : "ms";
+  for (const b of document.querySelectorAll("[data-c2c]")) b.classList.toggle("on", b.dataset.c2c === src);
+  const picking = Boolean(c2cPicking);
+  $("c2cPicking").classList.toggle("hidden", !picking);
+  $("c2cFrom").textContent = cloudLabel(src);
+  const destPath = picking ? cwd : lastIn[dst];
+  $("c2cTo").textContent = destPath && destPath !== "ms:" ? placeName(destPath, picking ? msLabel : "") : cloudLabel(dst) + " · no folder yet";
+  const items = picking ? [] : [...driveSel.values()];
+  const total = items.filter((f) => !f.dir).reduce((a, f) => a + (f.size || 0), 0);
+  $("c2cWhat").textContent = picking ? "" : (items.length ? `${placeName(cwd, msLabel)} · ${items.length} item${items.length > 1 ? "s" : ""}${total ? " · " + fmtSize(total) : ""}` : placeName(cwd, msLabel));
+  $("c2cHint").textContent = picking ? "" : items.length ? "" : "Tick files or folders on the right.";
+  const btn = $("c2cStart");
+  btn.disabled = picking || !items.length;
+  btn.lastChild.textContent = items.length ? ` Copy ${items.length} to ${cloudLabel(dst)}` : ` Copy to ${cloudLabel(dst)}`;
+  $("c2cPick").disabled = picking;
+  $("c2cSwap").disabled = picking;
+}
+async function c2cSetSource(src) {
+  if (c2cPicking) return;
+  await switchProvider(src === "ms");
+}
+for (const b of document.querySelectorAll("[data-c2c]")) b.onclick = () => guard(() => c2cSetSource(b.dataset.c2c));
+$("c2cSwap").onclick = () => guard(() => c2cSetSource(isMs(cwd) ? "g" : "ms"));
+$("c2cPick").onclick = () => guard(async () => {
+  const src = isMs(cwd) ? "ms" : "g";
+  const toMs = src === "g";
+  if (toMs && !(await msConnect())) return;
+  c2cPicking = src;
+  await loadDrive(toMs ? lastIn.ms : lastIn.g);
+  renderC2c();
+});
+$("c2cPickCancel").onclick = () => guard(async () => { const src = c2cPicking; c2cPicking = null; await loadDrive(lastIn[src]); });
+$("c2cPickDone").onclick = () => guard(async () => {
+  if (cwd === "ms:") return toast("Open a OneDrive / SharePoint folder first.", true);
+  const src = c2cPicking; c2cPicking = null;
+  toast(`Destination set: ${placeName(cwd, msLabel)}`);
+  await loadDrive(lastIn[src]);
+});
+$("c2cStart").onclick = () => guard(async () => {
+  const items = [...driveSel.values()];
+  if (!items.length) return toast("Tick files or folders first.", true);
+  const toMs = !isMs(cwd);
+  if (toMs && !(await msConnect())) return;
+  const dest = toMs ? lastIn.ms : lastIn.g;
+  if (!dest || dest === "ms:") { toast("Choose a destination folder first."); return $("c2cPick").click(); }
+  for (const it of items) await api("POST", "/copies", { src: it.full, dest });
+  toast(`Added ${items.length} copy job${items.length > 1 ? "s" : ""} → ${placeName(dest)}`);
+  loadDrive();
+  loadJobs();
+});
 
 function setMode(m) {
   mode = m;
   localStorage.setItem("ls-mode", m);
   document.body.classList.toggle("d2t", m === "drive2tg");
+  document.body.classList.toggle("c2c", m === "c2c");
+  if (m !== "c2c" && c2cPicking) { const src = c2cPicking; c2cPicking = null; loadDrive(lastIn[src]).catch(() => {}); }
   // Source pane always on the left: Drive first when sending Drive -> Telegram.
   const ws = $("workspace"), tg = $("tgPane"), dr = $("drivePane"), sp0 = ws.querySelector('[data-split="0"]');
   const [first, second] = m === "drive2tg" ? [dr, tg] : [tg, dr];
@@ -585,17 +685,14 @@ function setMode(m) {
   $("d2tInfo").classList.toggle("hidden", m !== "drive2tg");
   $("t2dBody").classList.toggle("hidden", m !== "tg2drive");
   $("linkBody").classList.toggle("hidden", m !== "link");
+  $("c2cBody").classList.toggle("hidden", m !== "c2c");
   document.body.classList.toggle("link-tg", m === "link" && linkTo() === "telegram");
   $("driveHint").textContent = m === "drive2tg"
     ? "Tick files or folders, then press Send to Telegram."
     : m === "link" ? "Files from links go into the folder you're looking at."
+    : m === "c2c" ? "Tick what to copy, then press Copy on the left."
     : "Files from Telegram go into the folder you're looking at.";
   linkDriveNote();
-  if (m !== "drive2tg") {
-    driveSel.clear();
-    for (const li of $("driveList").children) li.classList.remove("picked");
-    for (const c of $("driveList").querySelectorAll(".pick")) c.checked = false;
-  }
   renderDriveSel();
 }
 
@@ -760,8 +857,8 @@ function filterList(id, text) {
 // ------------------------------------------------ link -> drive / telegram
 
 const PLATFORM_NAME = {
-  sharepoint: "🟦 SharePoint / OneDrive", gdrive: "📁 Google Drive", dropbox: "🗃 Dropbox",
-  mediafire: "🔥 MediaFire", youtube: "🔴 YouTube / video site", direct: "🔗 Direct link",
+  sharepoint: "SharePoint / OneDrive", gdrive: "Google Drive", dropbox: "Dropbox",
+  mediafire: "MediaFire", youtube: "YouTube / video site", direct: "Direct link",
 };
 let linkChecked = null, linkCombo = null;
 
@@ -770,7 +867,7 @@ function linkDriveNote() {
   if (n) n.textContent = `Saved into: ${placeName(cwd, msLabel)} (open another folder on the right to change it)`;
 }
 
-function linkTo() { return document.querySelector('input[name="linkTo"]:checked').value; }
+function linkTo() { return document.querySelector('input[name="linkTo"]:checked').value === "telegram" ? "telegram" : "drive"; }
 
 async function checkLink() {
   const url = $("linkUrl").value.trim();
@@ -788,7 +885,7 @@ async function checkLink() {
       $("linkInfo").textContent = `✈️ Telegram message · ${f.name} · ${fmtSize(f.size)}`;
       $("linkQualityRow").classList.add("hidden");
       $("linkBundleRow").classList.add("hidden");
-      const d = document.querySelector('input[name="linkTo"][value="drive"]');
+      const d = document.querySelector(`input[name="linkTo"][value="${isMs(cwd) ? "ms" : "g"}"]`);
       if (!d.checked) { d.checked = true; d.onchange(); }
       $("linkOpts").classList.remove("hidden");
       linkDriveNote();
@@ -818,7 +915,12 @@ $("linkCheck").onclick = () => guard(checkLink);
 $("linkUrl").onkeydown = (e) => { if (e.key === "Enter") guard(checkLink); };
 $("linkUrl").onpaste = () => setTimeout(() => guard(checkLink), 0);
 for (const r of document.querySelectorAll('input[name="linkTo"]')) r.onchange = () => guard(async () => {
-  const tg = linkTo() === "telegram";
+  const v = document.querySelector('input[name="linkTo"]:checked').value;
+  const tg = v === "telegram";
+  if (!tg && (v === "ms") !== isMs(cwd)) {
+    await switchProvider(v === "ms");
+    if ((v === "ms") !== isMs(cwd)) document.querySelector(`input[name="linkTo"][value="${isMs(cwd) ? "ms" : "g"}"]`).checked = true;
+  }
   $("linkTargetRow").classList.toggle("hidden", !tg);
   $("linkDriveNote").classList.toggle("hidden", tg);
   document.body.classList.toggle("link-tg", tg);
@@ -947,7 +1049,7 @@ async function loadJobs() {
     const fill = el("i");
     fill.style.width = `${Math.round(j.progress * 100)}%`;
     const pct = FINISHED.includes(state) || state === "queued" ? "" : ` · ${Math.round(j.progress * 100)}%`;
-    const speed = (/^downloading/.test(state) || /^sending/.test(state)) && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
+    const speed = /^(downloading|sending|uploading|copying)/.test(state) && j.speed ? ` · ${fmtSize(j.speed)}/s` : "";
     const eta = FINISHED.includes(state) || state === "paused" ? "" : jobEta(j, state);
     const label = (j.state === "failed" && j.error) || (/^retrying/.test(state) && j.error) || STATE_LABEL[state] ||
       state.replace(/^downloading (\d+\/\d+)/, "Downloading · item $1").replace(/^sending part/, "Sending to Telegram · part").replace(/^sending file/, "Sending to Telegram · file");
@@ -996,7 +1098,7 @@ function jobEta(j, state) {
   let t = etaTrack.get(j.id);
   if (!t || t.state !== state || p < t.p0) { t = { state, t0: now, p0: p }; etaTrack.set(j.id, t); }
   let secs = 0;
-  if (j.speed && j.size && /^(downloading|sending)/.test(state)) secs = j.size * (1 - p) / j.speed;
+  if (j.speed && j.size && /^(downloading|sending|uploading|copying)/.test(state)) secs = j.size * (1 - p) / j.speed;
   else if (p > t.p0 && now - t.t0 > 3000) secs = (now - t.t0) / 1000 * (1 - p) / (p - t.p0);
   return secs > 0 && isFinite(secs) ? ` · ~${fmtEta(secs)} left` : "";
 }
@@ -1118,7 +1220,10 @@ $("manualConnect").onclick = () => guard(async () => {
 // ------------------------------------------------ theme
 const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;
-  $("toggleTheme").textContent = t === "light" ? "☾ Dark" : "☀ Light";
+  Promise.resolve(ls.setTheme && ls.setTheme(t)).catch(() => {});
+  { const b = $("toggleTheme"), dark = t === "light";
+    b.innerHTML = svg(dark ? "moon" : "sun") + "<span>" + (dark ? "Dark" : "Light") + "</span>";
+    b.title = dark ? "Switch to dark mode" : "Switch to light mode"; }
 };
 applyTheme(localStorage.getItem("ls-theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
 $("toggleTheme").onclick = () => {
@@ -1278,44 +1383,9 @@ $("saveMs").onclick = () => guard(async () => {
   await ls.configureMicrosoft().catch((e) => toast(cleanError(e), true));
   toast(id ? "Custom Microsoft app ID saved." : "Using the built-in Microsoft sign-in.");
 });
-$("driveSelCopy").onclick = () => guard(async () => {
-  const items = [...driveSel.values()];
-  if (!items.length) return toast("Tick files or folders first.", true);
-  const toMs = !isMs(cwd);
-  if (toMs && !(await msConnect())) return;
-  const dest = toMs ? lastIn.ms : lastIn.g;
-  if (dest === "ms:") {
-    await loadDrive("ms:");
-    return toast("Open (or create) a OneDrive / SharePoint folder, switch back, then press Copy to other cloud again.");
-  }
-  const total = items.filter((f) => !f.dir).reduce((a, f) => a + (f.size || 0), 0);
-  const dirs = items.filter((f) => f.dir).length;
-  $("copyFrom").textContent = placeName(cwd, msLabel);
-  $("copyWhat").textContent = `${items.length} item${items.length > 1 ? "s" : ""}${total ? " · " + fmtSize(total) : ""}${dirs ? ` · ${dirs} folder${dirs > 1 ? "s" : ""}` : ""}`;
-  $("copyTo").textContent = placeName(dest);
-  const choice = await new Promise((resolve) => {
-    const d = $("copyDlg");
-    d.returnValue = "";
-    d.onclose = () => resolve(d.returnValue || "cancel");
-    $("copyCancel").onclick = () => d.close("cancel");
-    $("copyPick").onclick = () => d.close("pick");
-    d.showModal();
-  });
-  if (choice === "pick") {
-    await loadDrive(dest);
-    toast("Open the folder you want, switch back, tick your files and press Copy to other cloud.");
-    return;
-  }
-  if (choice !== "ok") return;
-  for (const it of items) await api("POST", "/copies", { src: it.full, dest });
-  toast(`Added ${items.length} copy job${items.length > 1 ? "s" : ""}.`);
-  loadDrive();
-  loadJobs();
-});
-
 // ------------------------------------------------ keyboard shortcuts
 document.addEventListener("keydown", (e) => {
-  if ($("workspace").classList.contains("hidden") || document.querySelector("dialog[open]")) return;
+  if ($("app").classList.contains("hidden") || document.querySelector("dialog[open]")) return;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
   const searchBox = () => mode === "link" ? $("linkUrl") : mode === "drive2tg" ? $("driveSearch") : $("tgSearch");
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") { e.preventDefault(); searchBox().focus(); searchBox().select(); }
@@ -1376,3 +1446,5 @@ boot();
 
 // Browser sign-ins: Colab can't refresh the Microsoft token itself, so hand over a fresh one every 40 minutes.
 setInterval(() => { ls.msPush?.().catch(() => null); }, 40 * 60 * 1000);
+
+/*redesign-applied*/

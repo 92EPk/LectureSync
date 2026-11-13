@@ -725,6 +725,49 @@ def archive_base(name: str) -> str:
     return n.strip() or "extracted"
 
 
+def move_with_progress(job: "Job", src: Path, dest: Path, chunk: int = 16 * 1024 * 1024) -> None:
+    """Move into the Drive FUSE mount in chunks so progress/speed stay live (shutil.move blocks silently)."""
+    if src.is_dir():
+        files = [f for f in src.rglob("*") if f.is_file()]
+        total = sum(f.stat().st_size for f in files) or 1
+        done, t0 = 0, time.time()
+        dest.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            out = dest / f.relative_to(src)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            done = _copy_chunks(job, f, out, chunk, done, total, t0)
+        shutil.rmtree(src, ignore_errors=True)
+        return
+    total = src.stat().st_size or 1
+    _copy_chunks(job, src, dest, chunk, 0, total, time.time())
+    src.unlink(missing_ok=True)
+
+
+def _copy_chunks(job, src: Path, dest: Path, chunk: int, done: int, total: int, t0: float) -> int:
+    with open(src, "rb") as fi, open(dest, "wb") as fo:
+        while True:
+            if job.state == "cancelled":
+                raise RuntimeError("cancelled")
+            b = fi.read(chunk)
+            if not b:
+                break
+            fo.write(b)
+            done += len(b)
+            job.progress = min(done / total, 1.0)
+            job.speed = done / max(time.time() - t0, 0.1)
+    return done
+
+
+def ensure_space(dest: Path, need: int) -> None:
+    """Fail early if the target Drive can't hold the job (avoids a long download that fails at the end)."""
+    try:
+        free = shutil.disk_usage(dest).free
+    except OSError:
+        return
+    if need and free < need:
+        raise RuntimeError(f"Not enough space in Drive: need {need / 1024**3:.2f} GB, only {free / 1024**3:.2f} GB free")
+
+
 def unique(p: Path) -> Path:
     """Never overwrite or merge into an existing Drive item: add ' (2)', ' (3)'..."""
     if not p.exists():
@@ -759,6 +802,12 @@ async def _run(job: Job) -> None:
     need = total * (EXTRACT_FACTOR if job.extract and first_is_archive else 1.1)
     if shutil.disk_usage(SCRATCH).free < need:
         raise RuntimeError(f"not enough scratch space, need ~{need / 1e9:.1f} GB")
+    try:
+        ensure_space(_dest_dir(job), total)
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # destination not resolvable yet; checked again when moving
 
     work = SCRATCH / job.id
     shutil.rmtree(work, ignore_errors=True)
@@ -842,9 +891,8 @@ async def _run(job: Job) -> None:
         job.state, job.speed = "uploading", 0.0
         dest = _dest_dir(job)
         entries = list(out.iterdir())
-        for i, e in enumerate(entries, 1):
-            await asyncio.to_thread(shutil.move, str(e), str(unique(dest / e.name)))
-            job.progress = i / len(entries)
+        for e in entries:
+            await asyncio.to_thread(move_with_progress, job, e, unique(dest / e.name))
         job.state, job.progress = "done", 1.0
     finally:
         if proc is not None and proc.returncode is None:
@@ -1828,7 +1876,7 @@ async def _deliver(job: Job, f: Path, work: Path, folder: str, entity, limit: in
     if job.to == "drive":
         job.state, job.progress, job.speed = "uploading", 0.0, 0.0
         dest = _dest_dir(job, folder)
-        await asyncio.to_thread(shutil.move, str(f), str(unique(dest / f.name)))
+        await asyncio.to_thread(move_with_progress, job, f, unique(dest / f.name))
         return
     c = client()
     files = [f]
@@ -1913,7 +1961,7 @@ async def _run_bundle(job: Job, urls: list[str], folder: str, work: Path, gate_o
         job.state, job.progress, job.speed = "uploading", 0.0, 0.0
         dest = _dest_dir(job)
         for x in files:
-            await asyncio.to_thread(shutil.move, str(x), str(unique(dest / x.name)))
+            await asyncio.to_thread(move_with_progress, job, x, unique(dest / x.name))
     else:
         c = client()
         started, sent, gate = time.time(), 0, GATES[job.id]
@@ -2377,7 +2425,23 @@ def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -
                 _g("PUT", up, data=chunk, signed=False,
                    headers={"Content-Range": f"bytes {pos}-{end}/{size}", "Content-Length": str(len(chunk))})
                 pos, fails = end + 1, 0
-            except (MsError, urllib.error.URLError, TimeoutError):
+            except MsError as e:
+                if e.code in (404, 410):
+                    # Upload sessions expire (~15 min idle / lifetime): open a fresh one and resume.
+                    sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
+                              body={"item": {"@microsoft.graph.conflictBehavior": "rename"}})
+                    up = sess["uploadUrl"]
+                    nxt = sess.get("nextExpectedRanges") or []
+                    pos = int(nxt[0].split("-")[0]) if nxt else 0
+                    fails += 1
+                    if fails > 5:
+                        raise
+                    continue
+                fails += 1
+                if fails > 5:
+                    raise
+                time.sleep(2 * fails)
+            except (urllib.error.URLError, TimeoutError):
                 fails += 1
                 if fails > 5:
                     raise
@@ -2629,7 +2693,7 @@ async def _run_copy(job: Job) -> None:
             await _ms_push(job, [local])          # straight from the mounted Drive, no extra copy
         else:
             job.state, job.progress, job.speed = "copying", 0.0, 0.0
-            await asyncio.to_thread(shutil.move, str(local), str(unique(_dest_dir(job) / local.name)))
+            await asyncio.to_thread(move_with_progress, job, local, unique(_dest_dir(job) / local.name))
         job.state, job.progress, job.speed = "done", 1.0, 0.0
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -8,15 +8,303 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="assets/logo.png" alt="" />
-      <div>
-        <strong>LectureSync</strong>
-        <small>Telegram ⇄ Cloud, through Colab</small>
+  <header class="titlebar">
+    <div class="brand"><img src="assets/logo.png" alt="" /><strong>LectureSync</strong></div>
+    <span id="status" class="pill">Not connected</span>
+    <span class="grow"></span>
+    <nav class="tools">
+      <button id="toggleTheme" class="icon-btn" title="Dark / light" aria-label="Theme"></button>
+      <button id="openSettings" class="icon-btn" data-icon="gear" title="Settings" aria-label="Settings"></button>
+      <button id="openAbout" class="icon-btn" data-icon="info" title="About" aria-label="About"></button>
+      <button id="disconnect" class="icon-btn hidden" data-icon="logout" title="Disconnect from this Colab session" aria-label="Disconnect"></button>
+    </nav>
+  </header>
+
+  <main class="stage">
+    <!-- shown until the app is connected and signed in to Telegram -->
+    <section id="onboarding" class="onboarding">
+      <div class="ob-hero">
+        <h1>Set up LectureSync</h1>
+        <p class="lead">Three quick steps. Everything runs in Google's cloud — not on your internet.</p>
+      </div>
+
+      <ol class="progress" aria-label="Setup progress">
+        <li id="prog1"><span class="pdot"><b>1</b></span><span class="plabel"><small>Step 1</small>Telegram keys</span></li>
+        <li class="pline"></li>
+        <li id="prog2"><span class="pdot"><b>2</b></span><span class="plabel"><small>Step 2</small>Cloud engine</span></li>
+        <li class="pline"></li>
+        <li id="prog3"><span class="pdot"><b>3</b></span><span class="plabel"><small>Step 3</small>Sign in</span></li>
+      </ol>
+
+      <ol class="steps">
+        <li id="step1" class="step">
+          <div class="body">
+            <div class="step-icon tg" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg></div>
+            <h3>Add your Telegram keys</h3>
+            <p>A one-time <b>API ID</b> and <b>API Hash</b> from your own Telegram account. They're encrypted and never leave this PC.</p>
+            <div class="row center">
+              <button id="enterKeys" class="primary lg">Enter my keys</button>
+              <button id="getKeys" class="ghost" data-icon="link">Get my keys</button>
+            </div>
+            <details class="keys-help">
+              <summary>Need help getting API keys?</summary>
+              <ol>
+                <li>Open <b>my.telegram.org</b> and log in with your phone number.</li>
+                <li>Click <b>API development tools</b>.</li>
+                <li>Type any app title (e.g. <code>LectureSync</code>) and short name, then press <b>Create application</b>.</li>
+                <li>Copy <b>App api_id</b> and <b>App api_hash</b> into LectureSync. You only do this once.</li>
+              </ol>
+            </details>
+            <p id="step1Done" class="done hidden">✓ Keys saved and encrypted</p>
+          </div>
+        </li>
+
+        <li id="step2" class="step">
+          <div class="body">
+            <div class="step-icon colab" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.5 12 3.5 3.5 0 0 0 6 19z"/></svg></div>
+            <h3>Start your cloud engine</h3>
+            <p>A free Google Colab engine does the heavy lifting for you.</p>
+
+            <div class="mini-steps">
+              <div class="mini"><span>1</span><b>Run</b><small>in the opened page</small></div>
+              <div class="mini"><span>2</span><b>Allow Drive</b><small>Google asks once</small></div>
+              <div class="mini"><span>3</span><b>Connect</b><small>press the green button</small></div>
+            </div>
+
+            <div class="row center">
+              <button id="startColab" class="primary lg" data-icon="play">Start cloud engine</button>
+            </div>
+            <p id="stageText" class="stage-text"></p>
+
+            <div id="externalHelp" class="callout hidden">
+              <b>Code copied.</b> Paste it in the new notebook, run it, then copy the <code>LECTURE_SYNC_URL</code> line — the app connects by itself.
+              <button id="copyAgainExt" class="ghost small">Copy again</button>
+            </div>
+
+            <div class="alt-links">
+              <a href="#" id="toggleManual">Connect with a link</a>
+              <span>·</span>
+              <a href="#" id="startColabExternal">Use my own notebook</a>
+            </div>
+            <div id="manualBox" class="manual hidden">
+              <input id="manualUrl" placeholder="https://xxxx.trycloudflare.com" />
+              <button id="manualConnect" class="primary">Connect</button>
+            </div>
+          </div>
+        </li>
+
+        <li id="step3" class="step">
+          <div class="body">
+            <div class="step-icon tg" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></div>
+            <h3>Sign in to Telegram</h3>
+            <p>Scan once with your phone. You'll stay signed in.</p>
+            <div id="tgLogin" class="form hidden">
+              <div class="qr-box">
+                <div id="qrImg" class="qr-img"><span class="muted small">Press the button to show the code</span></div>
+                <div class="qr-help">
+                  <b>Fastest and most reliable way</b>
+                  <p class="muted small">On your phone open Telegram → <b>Settings → Devices → Link Desktop Device</b>, then scan this code.</p>
+                  <p id="qrState" class="small muted"></p>
+                  <div class="row"><button id="qrStart" class="primary">Show QR code</button></div>
+                  <div id="qrPwBox" class="hidden">
+                    <label>Two-step password <input id="qrPw" type="password" /></label>
+                    <div class="row"><button id="qrPwSend" class="primary">Continue</button></div>
+                  </div>
+                </div>
+              </div>
+              <details class="fallback"><summary>Sign in with phone code instead</summary>
+              <label>Phone number <input id="phone" placeholder="+20 1xx xxx xxxx" /></label>
+              <div class="row"><button id="sendCode" class="ghost">Send code</button></div>
+              <label>Code from Telegram <input id="code" inputmode="numeric" /></label>
+              <label>Two-step password <span class="muted">(only if you set one)</span> <input id="pw" type="password" /></label>
+              <div class="row"><button id="signIn" class="primary">Sign in</button></div>
+              </details>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- the actual app -->
+    <div id="app" class="app hidden">
+      <nav id="modeBar" class="rail" role="tablist" aria-label="Transfer mode">
+        <button class="mode on" data-mode="tg2drive" role="tab" data-icon="download" title="Telegram → Cloud"><span>To cloud</span></button>
+        <button class="mode" data-mode="drive2tg" role="tab" data-icon="upload" title="Cloud → Telegram"><span>To Telegram</span></button>
+        <button class="mode" data-mode="link" role="tab" data-icon="link" title="Web link → Cloud / Telegram"><span>From link</span></button>
+        <button class="mode" data-mode="c2c" role="tab" data-icon="cloud" title="Google Drive ⇄ OneDrive"><span>Cloud to cloud</span></button>
+      </nav>
+
+      <div class="content">
+        <section id="workspace" class="workspace">
+          <section class="pane" id="tgPane">
+            <div id="d2tInfo" class="d2t-info hidden">
+              <h2 data-icon="send">Send to Telegram</h2>
+              <p>Tick files or folders in <b class="cloudName">Google Drive</b>, then press <b>Send to Telegram</b>.</p>
+              <p class="small">Everything travels from Colab straight to Telegram — your own internet isn't used.</p>
+              <p class="small">Folders can go as one ZIP or file by file. Anything bigger than Telegram's limit (2 GB, or 4 GB with Premium) is split into parts only after you agree.</p>
+            </div>
+
+            <div id="linkBody" class="link-body hidden">
+              <h2 data-icon="link">Import from a link</h2>
+              <p class="muted small">Public or "anyone with the link" shares only: SharePoint / OneDrive, Google Drive, Dropbox, MediaFire, YouTube (videos &amp; playlists), Telegram messages (t.me/…) and direct file links.</p>
+              <div class="row tight link-row">
+                <input id="linkUrl" placeholder="Paste a link (https://…)" />
+                <button id="linkCheck" class="secondary" data-icon="search">Check link</button>
+              </div>
+              <div id="linkInfo" class="link-info hidden"></div>
+              <div id="linkOpts" class="form hidden">
+                <label id="linkQualityRow" class="hidden">Quality
+                  <select id="linkQuality">
+                    <option value="720" selected>720p HD — best for lectures</option>
+                    <option value="1080">1080p — highest</option>
+                    <option value="480">480p — smallest video</option>
+                    <option value="audio">Audio only</option>
+                  </select>
+                </label>
+                <div id="linkBundleRow" class="hidden">
+                  <p class="muted small dest-title">How should the playlist arrive?</p>
+                  <div class="dest-cards" role="radiogroup">
+                    <label class="dest-card"><input type="radio" name="linkBundle" value="0" checked />
+                      <span class="dest-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/></svg></span><span class="dest-txt"><b>Separate videos</b><small>Watch right away · one file each</small></span></label>
+                    <label class="dest-card"><input type="radio" name="linkBundle" value="1" />
+                      <span class="dest-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg></span><span class="dest-txt"><b>One 7-Zip archive</b><small>Whole course in one file</small></span></label>
+                  </div>
+                </div>
+                <p class="muted small dest-title">Where should it go?</p>
+                <div class="dest-cards three" role="radiogroup">
+                  <label class="dest-card"><input type="radio" name="linkTo" value="g" checked />
+                    <span class="dest-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="dest-txt"><b>Google Drive</b><small>Save into the open folder</small></span></label>
+                  <label class="dest-card"><input type="radio" name="linkTo" value="ms" />
+                    <span class="dest-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H8a5 5 0 1 1 1.6-9.7A6 6 0 0 1 21 12.5 3.5 3.5 0 0 1 17.5 19z"/></svg></span><span class="dest-txt"><b>OneDrive</b><small>OneDrive / SharePoint folder</small></span></label>
+                  <label class="dest-card" id="linkToTgCard"><input type="radio" name="linkTo" value="telegram" />
+                    <span class="dest-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></span><span class="dest-txt"><b>Telegram</b><small>Send to a chat or channel</small></span></label>
+                </div>
+                <p id="linkDriveNote" class="muted small"></p>
+                <div id="linkTargetRow" class="hidden">
+                  <label>Send to <span class="muted">(search a chat, or type any @username)</span></label>
+                  <div class="combo">
+                    <input id="linkTargetSearch" type="search" autocomplete="off" placeholder="⭐ Saved Messages — type to search…" />
+                    <ul id="linkTargetList" class="combo-list hidden" role="listbox"></ul>
+                  </div>
+                  <p id="linkTargetErr" class="small combo-err hidden"></p>
+                </div>
+                <label class="srow link-compress" id="linkCompressRow"><div><b>Compress before uploading</b><span>Shrinks videos up to 70% with sharp slide text; packs documents with 7-Zip. Skips PDF, JPG, ZIP.</span></div><input type="checkbox" class="switch" id="linkCompress" /></label>
+                <div class="row end link-action-row">
+                  <button id="linkStart" class="primary" data-icon="play">Start transfer</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="c2cBody" class="c2c-body hidden">
+              <h2 data-icon="cloud">Cloud to cloud</h2>
+              <p class="muted small">Copy between Google Drive and OneDrive inside Google's datacenter — your internet isn't used.</p>
+              <div class="seg c2c-dir" role="tablist" aria-label="Direction">
+                <button type="button" class="seg-btn" data-c2c="g">Google Drive → OneDrive</button>
+                <button type="button" class="seg-btn" data-c2c="ms">OneDrive → Google Drive</button>
+              </div>
+              <div class="copy-route c2c-route">
+                <div><small class="muted">From</small><b id="c2cFrom"></b><span id="c2cWhat" class="muted small"></span></div>
+                <button type="button" id="c2cSwap" class="icon-btn" data-icon="swap" title="Swap direction" aria-label="Swap direction"></button>
+                <div><small class="muted">To</small><b id="c2cTo"></b>
+                  <button type="button" id="c2cPick" class="secondary small" data-icon="folder">Choose folder</button></div>
+              </div>
+              <div id="c2cPicking" class="callout hidden">
+                Open the destination folder on the right, then press <b>Use this folder</b>.
+                <div class="row end"><button type="button" id="c2cPickCancel" class="ghost small">Cancel</button>
+                <button type="button" id="c2cPickDone" class="primary small">Use this folder</button></div>
+              </div>
+              <p id="c2cHint" class="muted small">Tick files or folders on the right.</p>
+              <div class="row end">
+                <button type="button" id="c2cStart" class="primary" data-icon="copy" disabled>Copy</button>
+              </div>
+            </div>
+
+            <div id="t2dBody">
+              <div class="pane-head">
+                <h2 data-icon="send">Telegram</h2>
+                <button id="refreshTg" class="icon-btn" data-icon="refresh" title="Refresh" aria-label="Refresh"></button>
+              </div>
+              <div class="tools-row">
+                <input id="chatSearch" class="search" type="search" autocomplete="off" placeholder="Find chat…  ( / )" />
+                <select id="chat"></select>
+              </div>
+              <input id="tgSearch" class="search" type="search" placeholder="Filter files · Enter searches the whole chat" />
+              <div id="kindFilter" class="chips">
+                <button class="chip on" data-kind="all">All</button>
+                <button class="chip" data-kind="video">Videos</button>
+                <button class="chip" data-kind="archive">Archives</button>
+                <button class="chip" data-kind="pdf">PDF</button>
+                <button class="chip" data-kind="doc">Documents</button>
+                <button class="chip" data-kind="audio">Audio</button>
+                <button class="chip" data-kind="image">Images</button>
+                <button class="chip" data-kind="file">Other</button>
+                <button id="tgSelAll" class="ghost small" title="Select every file shown with the current filter and search">Select all</button>
+              </div>
+              <div id="selBar" class="selbar hidden">
+                <span id="selCount"></span>
+                <div class="row tight">
+                  <button id="selClear" class="ghost small">Unselect</button>
+                  <button id="selSend" class="primary small">Send selected</button>
+                </div>
+              </div>
+              <ul id="tgFiles" class="list"></ul>
+              <p id="tgEmpty" class="empty hidden">No files in this chat.</p>
+            </div>
+          </section>
+
+          <div class="splitter" data-split="0" title="Drag to resize · double-click to reset"></div>
+
+          <section class="pane" id="drivePane">
+            <div class="pane-head cloud-head">
+              <h2 id="cloudTitle" class="sr-only" data-icon="drive">Google Drive</h2>
+              <div class="row tight">
+                <div class="seg" role="tablist" aria-label="Cloud">
+                  <button id="provG" class="seg-btn on" type="button">Google Drive</button>
+                  <button id="provMs" class="seg-btn" type="button" title="OneDrive / SharePoint">OneDrive</button>
+                </div>
+                <button id="msAccount" class="ghost small hidden" title="Microsoft account"></button>
+                <button id="up" class="icon-btn" data-icon="up" title="Up one folder" aria-label="Up one folder"></button>
+                <button id="refreshDrive" class="icon-btn" data-icon="refresh" title="Refresh" aria-label="Refresh"></button>
+                <button id="mkdir" class="icon-btn" data-icon="plus" title="New folder" aria-label="New folder"></button>
+              </div>
+            </div>
+            <div id="crumb" class="crumb"></div>
+            <div id="driveWarn" class="callout hidden">
+              Google Drive is not connected in Colab, so nothing shows here. Open the Colab page, run the cell again and press
+              <b>Connect to Google Drive</b>, then allow access. After that press <b>Refresh</b>.
+            </div>
+            <input id="driveSearch" class="search" type="search" placeholder="Search in this folder… (Ctrl+F)" />
+            <div id="driveSelBar" class="selbar hidden">
+              <span id="driveSelCount"></span>
+              <div class="row tight">
+                <button id="driveSelAll" class="ghost small">Select all</button>
+                <button id="driveSelClear" class="ghost small">Unselect</button>
+                <button id="driveSelSend" class="primary small" data-icon="send">Send to Telegram</button>
+              </div>
+            </div>
+            <ul id="driveList" class="list"></ul>
+            <p id="driveEmpty" class="empty hidden">This folder is empty.</p>
+            <p class="hint" id="driveHint">Files from Telegram go into the folder you're looking at.</p>
+          </section>
+        </section>
+
+        <section class="dock" id="jobsPane">
+          <div class="pane-head">
+            <h2 data-icon="jobs">Jobs <span id="jobsCount" class="count hidden"></span></h2>
+            <div class="row tight">
+              <button id="toggleJobs" class="ghost small" title="Collapse or expand the Jobs panel">Hide</button>
+              <button id="openHistory" class="ghost small">History</button>
+              <button id="clearJobs" class="ghost small">Clear finished</button>
+            </div>
+          </div>
+          <ul id="jobs" class="list"></ul>
+          <p id="jobsEmpty" class="empty">Nothing running. Press <b>Send</b> on a Telegram file.</p>
+        </section>
       </div>
     </div>
-    <span id="status" class="pill">Not connected</span>
+  </main>
+
+  <footer class="statusbar">
     <div id="accounts" class="accounts hidden" aria-label="Connected accounts">
       <span id="accTg" class="acc" title="Telegram">Telegram</span>
       <span id="accG" class="acc" title="Google Drive">Google Drive</span>
@@ -26,269 +314,7 @@
       <span id="diskText"></span>
       <div class="meter"><i id="diskFill"></i></div>
     </div>
-    <nav>
-      <button id="toggleTheme" class="ghost" title="Dark / light">Theme</button>
-      <button id="openSettings" class="ghost" data-icon="gear">Settings</button>
-      <button id="openAbout" class="ghost" data-icon="info">About</button>
-      <button id="disconnect" class="ghost hidden" title="Leave this Colab session and go back to setup">Disconnect</button>
-    </nav>
-  </header>
-
-  <!-- shown until the app is connected and signed in to Telegram -->
-  <section id="onboarding" class="onboarding">
-    <div class="ob-hero">
-      <h1>Set up LectureSync</h1>
-      <p class="lead">Three quick steps. Everything runs in Google's cloud — not on your internet.</p>
-    </div>
-
-    <ol class="progress" aria-label="Setup progress">
-      <li id="prog1"><span class="pdot"><b>1</b></span><span class="plabel"><small>Step 1</small>Telegram keys</span></li>
-      <li class="pline"></li>
-      <li id="prog2"><span class="pdot"><b>2</b></span><span class="plabel"><small>Step 2</small>Cloud engine</span></li>
-      <li class="pline"></li>
-      <li id="prog3"><span class="pdot"><b>3</b></span><span class="plabel"><small>Step 3</small>Sign in</span></li>
-    </ol>
-
-    <ol class="steps">
-      <li id="step1" class="step">
-        <div class="body">
-          <div class="step-icon tg" aria-hidden="true">🔑</div>
-          <h3>Add your Telegram keys</h3>
-          <p>A one-time <b>API ID</b> and <b>API Hash</b> from your own Telegram account. They're encrypted and never leave this PC.</p>
-          <div class="row center">
-            <button id="enterKeys" class="primary lg">Enter my keys</button>
-            <button id="getKeys" class="ghost" data-icon="link">Get my keys</button>
-          </div>
-          <details class="keys-help">
-            <summary>Need help getting API keys?</summary>
-            <ol>
-              <li>Open <b>my.telegram.org</b> and log in with your phone number.</li>
-              <li>Click <b>API development tools</b>.</li>
-              <li>Type any app title (e.g. <code>LectureSync</code>) and short name, then press <b>Create application</b>.</li>
-              <li>Copy <b>App api_id</b> and <b>App api_hash</b> into LectureSync. You only do this once.</li>
-            </ol>
-          </details>
-          <p id="step1Done" class="done hidden">✓ Keys saved and encrypted</p>
-        </div>
-      </li>
-
-      <li id="step2" class="step">
-        <div class="body">
-          <div class="step-icon colab" aria-hidden="true">☁</div>
-          <h3>Start your cloud engine</h3>
-          <p>A free Google Colab engine does the heavy lifting for you.</p>
-
-          <div class="mini-steps">
-            <div class="mini"><span>1</span><b>Run ▶</b><small>in the opened page</small></div>
-            <div class="mini"><span>2</span><b>Allow Drive</b><small>Google asks once</small></div>
-            <div class="mini"><span>3</span><b>Connect</b><small>press the green button</small></div>
-          </div>
-
-          <div class="row center">
-            <button id="startColab" class="primary lg" data-icon="play">Start cloud engine</button>
-          </div>
-          <p id="stageText" class="stage-text"></p>
-
-          <div id="externalHelp" class="callout hidden">
-            <b>Code copied.</b> Paste it in the new notebook, run it, then copy the <code>LECTURE_SYNC_URL</code> line — the app connects by itself.
-            <button id="copyAgainExt" class="ghost small">Copy again</button>
-          </div>
-
-          <div class="alt-links">
-            <a href="#" id="toggleManual">Connect with a link</a>
-            <span>·</span>
-            <a href="#" id="startColabExternal">Use my own notebook</a>
-          </div>
-          <div id="manualBox" class="manual hidden">
-            <input id="manualUrl" placeholder="https://xxxx.trycloudflare.com" />
-            <button id="manualConnect" class="primary">Connect</button>
-          </div>
-        </div>
-      </li>
-
-      <li id="step3" class="step">
-        <div class="body">
-          <div class="step-icon tg" aria-hidden="true">✈</div>
-          <h3>Sign in to Telegram</h3>
-          <p>Scan once with your phone. You'll stay signed in.</p>
-          <div id="tgLogin" class="form hidden">
-            <div class="qr-box">
-              <div id="qrImg" class="qr-img"><span class="muted small">Press the button to show the code</span></div>
-              <div class="qr-help">
-                <b>Fastest and most reliable way</b>
-                <p class="muted small">On your phone open Telegram → <b>Settings → Devices → Link Desktop Device</b>, then scan this code.</p>
-                <p id="qrState" class="small muted"></p>
-                <div class="row"><button id="qrStart" class="primary">Show QR code</button></div>
-                <div id="qrPwBox" class="hidden">
-                  <label>Two-step password <input id="qrPw" type="password" /></label>
-                  <div class="row"><button id="qrPwSend" class="primary">Continue</button></div>
-                </div>
-              </div>
-            </div>
-            <details class="fallback"><summary>Sign in with phone code instead</summary>
-            <label>Phone number <input id="phone" placeholder="+20 1xx xxx xxxx" /></label>
-            <div class="row"><button id="sendCode" class="ghost">Send code</button></div>
-            <label>Code from Telegram <input id="code" inputmode="numeric" /></label>
-            <label>Two-step password <span class="muted">(only if you set one)</span> <input id="pw" type="password" /></label>
-            <div class="row"><button id="signIn" class="primary">Sign in</button></div>
-            </details>
-          </div>
-        </div>
-      </li>
-    </ol>
-  </section>
-
-  <!-- the actual workspace -->
-  <div id="modeBar" class="modebar hidden" role="tablist">
-    <button class="mode on" data-mode="tg2drive" role="tab">Telegram → Cloud</button>
-    <button class="mode" data-mode="drive2tg" role="tab">Cloud → Telegram</button>
-    <button class="mode" data-mode="link" role="tab">Web link</button>
-  </div>
-  <main id="workspace" class="workspace hidden">
-    <section class="pane" id="tgPane">
-      <div id="d2tInfo" class="d2t-info hidden">
-        <h2 data-icon="send">Send to Telegram</h2>
-        <p>Tick files or folders in <b class="cloudName">Google Drive</b>, then press <b>Send to Telegram</b>.</p>
-        <p class="muted small">Everything travels from Colab straight to Telegram — your own internet isn't used.</p>
-        <p class="muted small">Folders can go as one ZIP or file by file. Anything bigger than Telegram's limit (2 GB, or 4 GB with Premium) is split into parts only after you agree.</p>
-      </div>
-      <div id="linkBody" class="link-body hidden">
-        <h2 data-icon="link">Import from a link</h2>
-        <p class="muted small">Public or "anyone with the link" shares only: SharePoint / OneDrive, Google Drive, Dropbox, MediaFire, YouTube (videos &amp; playlists), Telegram messages (t.me/…) and direct file links.</p>
-        <div class="row tight link-row">
-          <input id="linkUrl" placeholder="Paste a link (https://…)" />
-          <button id="linkCheck" class="ghost small">Check</button>
-        </div>
-        <div id="linkInfo" class="link-info hidden"></div>
-        <div id="linkOpts" class="form hidden">
-          <label id="linkQualityRow" class="hidden">Quality
-            <select id="linkQuality">
-              <option value="720" selected>720p HD — best for lectures</option>
-              <option value="1080">1080p — highest</option>
-              <option value="480">480p — smallest video</option>
-              <option value="audio">Audio only</option>
-            </select>
-          </label>
-          <div id="linkBundleRow" class="hidden">
-            <p class="muted small dest-title">How should the playlist arrive?</p>
-            <div class="dest-cards" role="radiogroup">
-              <label class="dest-card"><input type="radio" name="linkBundle" value="0" checked />
-                <span class="dest-ico">🎬</span><span class="dest-txt"><b>Separate videos</b><small>Watch right away · one file each</small></span></label>
-              <label class="dest-card"><input type="radio" name="linkBundle" value="1" />
-                <span class="dest-ico">🗜️</span><span class="dest-txt"><b>One 7-Zip archive</b><small>Whole course in one file</small></span></label>
-            </div>
-          </div>
-          <p class="muted small dest-title">Where should it go?</p>
-          <div class="dest-cards" role="radiogroup">
-            <label class="dest-card"><input type="radio" name="linkTo" value="drive" checked />
-              <span class="dest-ico">📁</span><span class="dest-txt"><b class="cloudName">Google Drive</b><small>Save into the open folder</small></span></label>
-            <label class="dest-card" id="linkToTgCard"><input type="radio" name="linkTo" value="telegram" />
-              <span class="dest-ico">✈️</span><span class="dest-txt"><b>Telegram</b><small>Send to a chat or channel</small></span></label>
-          </div>
-          <p id="linkDriveNote" class="muted small"></p>
-          <div id="linkTargetRow" class="hidden">
-            <label>Send to <span class="muted">(search a chat, or type any @username)</span></label>
-            <div class="combo">
-              <input id="linkTargetSearch" type="search" autocomplete="off" placeholder="⭐ Saved Messages — type to search…" />
-              <ul id="linkTargetList" class="combo-list hidden" role="listbox"></ul>
-            </div>
-            <p id="linkTargetErr" class="small combo-err hidden"></p>
-          </div>
-          <label class="check" id="linkCompressRow"><input type="checkbox" id="linkCompress" /> Compress before uploading
-            <small class="muted">— Reduces video size up to 70% without losing slide clarity; archives documents with 7-Zip. Skips already-compressed files (PDF, JPG, ZIP).</small>
-          </label>
-          <div class="row end link-action-row">
-            <button id="linkStart" class="primary" data-icon="play">Start transfer</button>
-          </div>
-        </div>
-      </div>
-      <div id="t2dBody">
-      <div class="pane-head">
-        <h2 data-icon="send">Telegram</h2>
-        <button id="refreshTg" class="ghost small" title="Refresh" data-icon="refresh"></button>
-      </div>
-      <input id="chatSearch" class="search" type="search" autocomplete="off" placeholder="Search chats &amp; channels… (press /)" />
-      <select id="chat"></select>
-      <input id="tgSearch" class="search" type="search" placeholder="Search files by name… (Enter searches the whole chat)" />
-      <div id="kindFilter" class="chips">
-        <button class="chip on" data-kind="all">All</button>
-        <button class="chip" data-kind="video">Videos</button>
-        <button class="chip" data-kind="archive">Archives</button>
-        <button class="chip" data-kind="pdf">PDF</button>
-        <button class="chip" data-kind="doc">Documents</button>
-        <button class="chip" data-kind="audio">Audio</button>
-        <button class="chip" data-kind="image">Images</button>
-        <button class="chip" data-kind="file">Other</button>
-        <button id="tgSelAll" class="ghost small" title="Select every file shown with the current filter and search">Select all</button>
-      </div>
-      <div id="selBar" class="selbar hidden">
-        <span id="selCount"></span>
-        <div class="row tight">
-          <button id="selClear" class="ghost small">Unselect</button>
-          <button id="selSend" class="primary small">Send selected</button>
-        </div>
-      </div>
-      <ul id="tgFiles" class="list"></ul>
-      <p id="tgEmpty" class="empty hidden">No files in this chat.</p>
-      </div>
-    </section>
-
-    <div class="splitter" data-split="0" title="Drag to resize"></div>
-
-    <section class="pane wide" id="drivePane">
-      <div class="pane-head">
-        <h2 data-icon="drive" id="cloudTitle">Google Drive</h2>
-        <div class="row tight">
-          <div class="seg" role="tablist" aria-label="Cloud">
-            <button id="provG" class="seg-btn on" type="button">Google Drive</button>
-            <button id="provMs" class="seg-btn" type="button">OneDrive / SharePoint</button>
-          </div>
-          <button id="msAccount" class="ghost small hidden" title="Microsoft account"></button>
-          <button id="up" class="ghost small" data-icon="up">Up</button>
-          <button id="refreshDrive" class="ghost small" title="Refresh" data-icon="refresh">Refresh</button>
-          <button id="mkdir" class="ghost small" data-icon="plus">New folder</button>
-        </div>
-      </div>
-      <div id="crumb" class="crumb"></div>
-      <div id="driveWarn" class="callout hidden">
-        Google Drive is not connected in Colab, so nothing shows here. Open the Colab page, run the cell again and press
-        <b>Connect to Google Drive</b>, then allow access. After that press <b>Refresh</b>.
-      </div>
-      <input id="driveSearch" class="search" type="search" placeholder="Search in this folder… (Ctrl+F)" />
-      <div id="driveSelBar" class="selbar hidden">
-        <span id="driveSelCount"></span>
-        <div class="row tight">
-          <button id="driveSelAll" class="ghost small">Select all</button>
-          <button id="driveSelClear" class="ghost small">Unselect</button>
-          <button id="driveSelCopy" class="ghost small" data-icon="copy" title="Copy to the folder last opened in the other cloud">Copy to other cloud</button>
-          <button id="driveSelSend" class="primary small" data-icon="send">Send to Telegram</button>
-        </div>
-      </div>
-      <ul id="driveList" class="list"></ul>
-      <p id="driveEmpty" class="empty hidden">This folder is empty.</p>
-      <p class="hint" id="driveHint">Files from Telegram go into the folder you're looking at.</p>
-    </section>
-
-    <div class="splitter" data-split="1" title="Drag to resize"></div>
-
-    <section class="pane jobs-pane" id="jobsPane">
-      <div class="pane-head">
-        <h2 data-icon="jobs">Jobs <span id="jobsCount" class="count hidden"></span></h2>
-        <div class="row tight">
-          <button id="toggleJobs" class="ghost small" title="Collapse or expand the Jobs panel">Hide</button>
-          <button id="openHistory" class="ghost small">History</button>
-          <button id="clearJobs" class="ghost small">Clear finished</button>
-        </div>
-      </div>
-      <ul id="jobs" class="list"></ul>
-      <p id="jobsEmpty" class="empty">Nothing running. Press <b>Send</b> on a Telegram file.</p>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <span class="credit">🎓 A student initiative by <b>Ahmed Omran</b> · CS Diploma, <b>FGSSR — Cairo University</b></span>
-    <a href="#" data-open="https://cs-fgssr.pages.dev/">cs-fgssr.pages.dev</a>
-    <a href="#" data-open="https://github.com/92EPK">GitHub · @92EPK</a>
+    <span class="grow"></span>
     <span id="ver" class="muted"></span>
   </footer>
 
@@ -383,7 +409,7 @@
       <img src="assets/logo.png" alt="" />
       <h3>LectureSync</h3>
       <p id="aboutVer" class="muted"></p>
-      <div class="about-badge">🎓 Student initiative · FGSSR, Cairo University</div>
+      <div class="about-badge">Student initiative · FGSSR, Cairo University</div>
       <p>Pulls lecture recordings from Telegram, extracts them on Google Colab and puts them straight into your cloud (Google Drive or OneDrive) — without using your home internet.</p>
       <p class="small">A free student initiative built by a Computer Science Diploma student at the Faculty of Graduate Studies for Statistical Research (FGSSR), Cairo University, to help fellow students move their lectures easily.</p>
       <dl>
@@ -402,7 +428,7 @@
 
   <dialog id="update">
     <form method="dialog">
-      <h3>🚀 Update available</h3>
+      <h3>Update available</h3>
       <p id="updateVer" class="muted"></p>
       <pre id="updateNotes" class="update-notes"></pre>
       <div class="row end">
@@ -430,12 +456,14 @@
       <p id="sendWhat" class="muted"></p>
       <label id="renameBox">Save as <input id="sendRename" /></label>
       <div id="archiveOpts">
-        <label class="check"><input id="sendExtract" type="checkbox" checked /> Extract the archive (untick to keep it compressed)</label>
-        <label class="check" id="multiBox"><input id="sendMulti" type="checkbox" /> These are parts of one archive (part1, part2…) — join and extract them together</label>
-        <label class="check"><input id="sendSub" type="checkbox" /> Always put the extracted files in their own folder</label>
-        <label>Archive password <span class="muted">(only if it has one)</span> <input id="sendPw" type="password" /></label>
+        <p class="sgroup">Archive</p>
+        <label class="srow"><div><b>Extract the archive</b><span>Turn off to keep it as one compressed file</span></div><input id="sendExtract" type="checkbox" class="switch" checked /></label>
+        <label class="srow" id="multiBox"><div><b>Join multi-part archive</b><span>part1, part2… are joined and extracted together</span></div><input id="sendMulti" type="checkbox" class="switch" /></label>
+        <label class="srow"><div><b>Own folder</b><span>Put the extracted files in a folder of their own</span></div><input id="sendSub" type="checkbox" class="switch" /></label>
+        <label>Archive password <span class="muted small">(only if it has one)</span> <input id="sendPw" type="password" /></label>
       </div>
-      <label class="check"><input id="sendCompress" type="checkbox" /> Compress before saving <span class="muted">(videos re-encoded with sharp slide text, other files packed with 7-Zip — the original is kept if it isn't smaller)</span></label>
+      <p class="sgroup">Size</p>
+      <label class="srow"><div><b>Compress before saving</b><span>Videos re-encoded with sharp slide text, other files packed with 7-Zip. The original is kept if it isn't smaller.</span></div><input id="sendCompress" type="checkbox" class="switch" /></label>
       <div class="row end">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="ok" class="primary">Send</button>
@@ -463,24 +491,6 @@
       <div class="row end">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="ok" class="primary">Send</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="copyDlg">
-    <form method="dialog">
-      <h3>Copy to the other cloud</h3>
-      <p class="muted small">Files travel inside Google's datacenter, not over your internet.</p>
-      <div class="copy-route">
-        <div><small class="muted">From</small><b id="copyFrom"></b><span id="copyWhat" class="muted small"></span></div>
-        <div class="arrow">→</div>
-        <div><small class="muted">To</small><b id="copyTo"></b></div>
-      </div>
-      <p class="muted small">Want a different folder? Press <b>Choose folder</b>, open it on the right, then press <b>Copy to other cloud</b> again.</p>
-      <div class="row end">
-        <button type="button" id="copyCancel" class="ghost">Cancel</button>
-        <button type="button" id="copyPick" class="ghost">Choose folder</button>
-        <button value="ok" class="primary">Start copy</button>
       </div>
     </form>
   </dialog>

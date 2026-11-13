@@ -15,7 +15,7 @@
  */
 const {
   app, BrowserWindow, ipcMain, safeStorage, Notification, clipboard, shell, dialog, powerSaveBlocker,
-  Tray, Menu, nativeImage,
+  Tray, Menu, nativeImage, screen, nativeTheme,
 } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -31,15 +31,23 @@ const cfgFile = () => path.join(app.getPath("userData"), "config.json");
 const canEncrypt = () => safeStorage.isEncryptionAvailable();
 
 function readConfig() {
+  let raw;
   try {
-    const raw = JSON.parse(fs.readFileSync(cfgFile(), "utf8"));
-    for (const k of SECRET_KEYS) {
-      if (raw[k] && raw.encrypted) raw[k] = safeStorage.decryptString(Buffer.from(raw[k], "base64"));
-    }
-    return raw;
+    raw = JSON.parse(fs.readFileSync(cfgFile(), "utf8"));
   } catch {
     return {};
   }
+  // Decrypt each secret on its own: one broken keyring entry must not wipe every other setting.
+  for (const k of SECRET_KEYS) {
+    if (!raw[k] || !raw.encrypted) continue;
+    try {
+      raw[k] = safeStorage.decryptString(Buffer.from(raw[k], "base64"));
+    } catch (e) {
+      console.warn(`[config] could not decrypt "${k}", it must be re-entered`, e.message);
+      delete raw[k];
+    }
+  }
+  return raw;
 }
 
 function writeConfig(patch) {
@@ -47,7 +55,10 @@ function writeConfig(patch) {
   for (const k of SECRET_KEYS) {
     if (out[k] && out.encrypted) out[k] = safeStorage.encryptString(out[k]).toString("base64");
   }
-  fs.writeFileSync(cfgFile(), JSON.stringify(out));
+  // Atomic write: a crash mid-write can never leave a half-written config.json.
+  const tmp = cfgFile() + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(out));
+  fs.renameSync(tmp, cfgFile());
 }
 
 // ------------------------------------------------------------ worker HTTP
@@ -523,13 +534,28 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
+const CHROME = {
+  dark:  { color: "#0d1116", symbolColor: "#eef1f4" },
+  light: { color: "#e9edea", symbolColor: "#0d1512" },
+};
+ipcMain.handle("theme:set", (_e, t) => {
+  const theme = t === "light" ? "light" : "dark";
+  nativeTheme.themeSource = theme;
+  if (process.platform === "win32" && mainWin && !mainWin.isDestroyed())
+    mainWin.setTitleBarOverlay({ ...CHROME[theme], height: 40 });
+});
+
 function createMainWindow() {
+  const wa = screen.getPrimaryDisplay().workAreaSize;
   mainWin = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 980,
-    minHeight: 640,
-    backgroundColor: "#07090c",
+    width: Math.min(1280, wa.width),
+    height: Math.min(820, wa.height),
+    minWidth: Math.min(980, wa.width),
+    minHeight: Math.min(640, wa.height),
+    backgroundColor: "#0b0e12",
+    ...(process.platform === "win32"
+      ? { titleBarStyle: "hidden", titleBarOverlay: { ...CHROME.dark, height: 40 } }
+      : {}),
     title: "LectureSync",
     icon: path.join(__dirname, "ui", "assets", "logo.png"),
     webPreferences: {
@@ -574,3 +600,5 @@ function createMainWindow() {
 
 app.on("before-quit", () => { quitting = true; });
 app.on("window-all-closed", () => app.quit());
+
+/*redesign-applied*/
