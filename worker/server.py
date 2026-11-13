@@ -163,7 +163,29 @@ def disk():
             out["drive"] = {"total": d.total, "used": d.used, "free": d.free}
         except OSError:
             pass
+    od = _ms_quota()
+    if od:
+        out["onedrive"] = od
     return out
+
+
+_MS_QUOTA = {"t": 0.0, "v": None}
+
+
+def _ms_quota():
+    """OneDrive free space (cached 60s so the 15s status poll stays fast)."""
+    try:
+        if not ms_ready():
+            return None
+        if time.time() - _MS_QUOTA["t"] < 60:
+            return _MS_QUOTA["v"]
+        q = (_g("GET", "/me/drive?$select=quota").get("quota") or {})
+        v = {"total": q.get("total") or 0, "used": q.get("used") or 0, "free": q.get("remaining") or 0} if q else None
+        _MS_QUOTA.update(t=time.time(), v=v)
+        return v
+    except Exception:
+        _MS_QUOTA.update(t=time.time(), v=None)
+        return None
 
 
 # ---------------------------------------------------------------- telegram login
