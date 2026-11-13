@@ -20,12 +20,13 @@ const {
 const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
+const http = require("http");
 const path = require("path");
 
 const PROTOCOL = "lecturesync";
 const NOTEBOOK_URL = "https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb";
 
-const SECRET_KEYS = ["token", "apiHash"];
+const SECRET_KEYS = ["token", "apiHash", "msRefresh"];
 const cfgFile = () => path.join(app.getPath("userData"), "config.json");
 const canEncrypt = () => safeStorage.isEncryptionAvailable();
 
@@ -280,6 +281,84 @@ ipcMain.handle("microsoft:configure", () => {
   const { msClientId, msTenant } = readConfig();
   return call("POST", "/ms/configure", { client_id: msClientId || MS_DEFAULT_CLIENT_ID, tenant: msClientId ? msTenant || "" : "" });
 });
+// ---- Microsoft sign-in in the PC's own browser (PKCE + localhost redirect).
+// University rules (error 53003) block sign-ins that start from Colab's US datacenter;
+// signing in here uses the user's own IP and device, then only the token goes to Colab.
+const MS_LIGHT_SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
+const b64url = (b) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const msAuthority = () => `https://login.microsoftonline.com/${readConfig().msTenant || "organizations"}/oauth2/v2.0`;
+
+function postForm(url, data) {
+  const body = new URLSearchParams(data).toString();
+  return new Promise((resolve, reject) => {
+    const req = https.request(new URL(url), { method: "POST", timeout: 20000,
+      headers: { "content-type": "application/x-www-form-urlencoded", "content-length": Buffer.byteLength(body) } }, (res) => {
+      let raw = ""; res.setEncoding("utf8"); res.on("data", (c) => (raw += c));
+      res.on("end", () => { try { resolve(JSON.parse(raw)); } catch { reject(new Error("Microsoft answered " + res.statusCode)); } });
+    });
+    req.on("timeout", () => req.destroy(new Error("Microsoft did not answer in time")));
+    req.on("error", reject); req.write(body); req.end();
+  });
+}
+
+function idUser(idToken) {
+  try {
+    const p = JSON.parse(Buffer.from(idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
+    return p.preferred_username || p.email || p.name || "";
+  } catch { return ""; }
+}
+
+async function msHandOver(r) {
+  if (!r.access_token) throw new Error((r.error_description || r.error || "Microsoft sign-in failed").split("\r\n")[0]);
+  const user = idUser(r.id_token || "") || readConfig().msUser || "";
+  writeConfig({ ...(r.refresh_token ? { msRefresh: r.refresh_token } : {}), msUser: user });
+  await call("POST", "/ms/token", { access_token: r.access_token, expires_in: Number(r.expires_in) || 3600, user });
+  return { ok: true, user };
+}
+
+ipcMain.handle("microsoft:browser-login", async () => {
+  const { msClientId } = readConfig();
+  if (!msClientId) throw new Error("Add your Microsoft app ID in Settings first");
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
+  const state = b64url(crypto.randomBytes(16));
+  const { code, redirect } = await new Promise((resolve, reject) => {
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://localhost");
+      if (u.pathname !== "/") { res.writeHead(404); return res.end(); }
+      const ok = u.searchParams.get("state") === state && u.searchParams.get("code");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<body style="font-family:system-ui;background:#0c0d0e;color:#eee;display:grid;place-items:center;height:100vh"><h2>${ok ? "Signed in — you can close this tab and go back to LectureSync." : "Sign-in failed — go back to LectureSync and try again."}</h2></body>`);
+      clearTimeout(timer); srv.close();
+      if (ok) resolve({ code: u.searchParams.get("code"), redirect: `http://localhost:${srv.address()?.port || port}` });
+      else reject(new Error((u.searchParams.get("error_description") || u.searchParams.get("error") || "sign-in cancelled").split("\r\n")[0]));
+    });
+    let port = 0;
+    const timer = setTimeout(() => { srv.close(); reject(new Error("Sign-in timed out — try again")); }, 5 * 60 * 1000);
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      port = srv.address().port;
+      const q = new URLSearchParams({ client_id: msClientId, response_type: "code", redirect_uri: `http://localhost:${port}`,
+        response_mode: "query", scope: MS_LIGHT_SCOPES, state, code_challenge: challenge, code_challenge_method: "S256", prompt: "select_account" });
+      shell.openExternal(`${msAuthority()}/authorize?${q}`);
+    });
+  });
+  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, grant_type: "authorization_code", code,
+    redirect_uri: redirect, code_verifier: verifier, scope: MS_LIGHT_SCOPES });
+  return msHandOver(r);
+});
+
+// Refresh on the PC and hand the fresh token to Colab (Colab never refreshes it itself).
+ipcMain.handle("microsoft:push", async () => {
+  const { msClientId, msRefresh } = readConfig();
+  if (!msClientId || !msRefresh) return { ok: false };
+  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, grant_type: "refresh_token",
+    refresh_token: msRefresh, scope: MS_LIGHT_SCOPES });
+  if (!r.access_token) { writeConfig({ msRefresh: "" }); return { ok: false }; }
+  return msHandOver(r);
+});
+ipcMain.handle("microsoft:forget", () => writeConfig({ msRefresh: "", msUser: "" }));
+
 ipcMain.handle("api", (_e, method, route, body) => call(method, route, body));
 ipcMain.handle("colab:start", () => startColab());
 // Fallback: classic copy/paste of the cell into the user's own notebook.

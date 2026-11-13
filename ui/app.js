@@ -451,6 +451,16 @@ async function msConnect() {
   await ls.configureMicrosoft?.().catch(() => null);
   let s = await msStatus();
   if (s.connected) return true;
+  const cfg = await ls.getConfig();
+  if (cfg.msClientId && ls.msBrowserLogin) {
+    // Own app ID: sign in from this PC's browser so university rules see the user's own IP/device.
+    if ((await ls.msPush().catch(() => null))?.ok) return true;
+    toast("Finish signing in to Microsoft in your browser…");
+    const r = await ls.msBrowserLogin().catch((e) => { toast(cleanError(e), true); return null; });
+    if (!r) return false;
+    toast(`Connected to Microsoft${r.user ? " as " + r.user : ""}.`);
+    return true;
+  }
   const r = await api("POST", "/ms/auth/start");
   $("msCode").textContent = r.user_code;
   $("msState").textContent = "Waiting for you to sign in…";
@@ -1254,6 +1264,7 @@ $("provG").onclick = () => guard(() => switchProvider(false));
 $("provMs").onclick = () => guard(() => switchProvider(true));
 $("msAccount").onclick = () => guard(async () => {
   await api("POST", "/ms/logout");
+  await ls.msForget?.().catch(() => null);
   toast("Signed out of Microsoft.");
   await loadDrive(lastIn.g);
 });
@@ -1327,7 +1338,7 @@ async function boot() {
   const h = cfg.url ? await refreshStatus() : null;
   if (h) {
     // The worker forgets keys on every new Colab run; hand them over again.
-    ls.configureMicrosoft?.().catch(() => null);
+    ls.configureMicrosoft?.().then(() => ls.msPush?.()).catch(() => null);
     if (!h.telegram_ready) {
       const r = await ls.configureTelegram().catch((e) => { toast(cleanError(e), true); return null; });
       signedIn = Boolean(r && r.telegram);
@@ -1362,3 +1373,6 @@ setInterval(async () => {
 setInterval(() => { if (connected && signedIn) loadJobs().catch(() => {}); }, 2000);
 boot();
 })();
+
+// Browser sign-ins: Colab can't refresh the Microsoft token itself, so hand over a fresh one every 40 minutes.
+setInterval(() => { ls.msPush?.().catch(() => null); }, 40 * 60 * 1000);

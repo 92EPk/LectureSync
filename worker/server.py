@@ -2057,6 +2057,11 @@ def _ms_token() -> str:
     if not ms_ready():
         raise MsError(428, "Microsoft account not connected — press 'Connect Microsoft' first")
     if time.time() > MS["exp"] - 120:
+        if not MS["refresh"]:
+            # Signed in from the PC's browser: the desktop app refreshes and hands over new tokens.
+            if time.time() < MS["exp"]:
+                return MS["access"]
+            raise MsError(428, "Microsoft sign-in expired — keep the LectureSync app open or sign in again")
         r = _form_post(f"{MS_AUTH}/token", {"client_id": MS_CLIENT_ID, "grant_type": "refresh_token",
                                              "refresh_token": MS["refresh"], "scope": MS_SCOPES})
         if "access_token" not in r:
@@ -2509,6 +2514,24 @@ def ms_configure(body: MsConfigIn):
     MS_CLIENT_ID, MS_TENANT = cid, tenant
     MS_AUTH = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
     MS_SCOPES = MS_SCOPES_FULL if cid == MS_DEFAULT_CLIENT_ID else MS_SCOPES_LIGHT
+    return {"ok": True}
+
+
+class MsTokenIn(BaseModel):
+    access_token: str
+    expires_in: int = 3600
+    user: str = ""
+
+
+@app.post("/ms/token", dependencies=auth)
+def ms_token_in(body: MsTokenIn):
+    """Token from a sign-in done in the PC's own browser (passes university IP/device rules)."""
+    first = not MS["access"]
+    MS.update(access=body.access_token.strip(), refresh="", exp=time.time() + max(60, body.expires_in), flow=None)
+    if body.user:
+        MS["user"] = body.user
+    if first:
+        MS["roots"], MS["labels"] = None, {}
     return {"ok": True}
 
 
