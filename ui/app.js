@@ -694,6 +694,7 @@ function setMode(m) {
     : "Files from Telegram go into the folder you're looking at.";
   linkDriveNote();
   renderDriveSel();
+  if (m === "link" && !$("linkUrl").value.trim()) pasteLink(true).catch(() => {});
 }
 
 // ------------------------------------------------ drive -> telegram
@@ -911,6 +912,19 @@ async function loadLinkTargets() {
   linkCombo = setupTargetCombo(tgTargets, ["linkTargetSearch", "linkTargetList", "linkTargetErr"]);
 }
 
+// Smart paste: pick up a copied link (https://… or t.me/…) without Ctrl+V.
+const LINK_RE = /^(https?:\/\/|t\.me\/)\S+$/i;
+let lastAutoPaste = "";
+async function pasteLink(auto = false) {
+  const text = ((await ls.readClipboard?.()) || "").trim();
+  if (!LINK_RE.test(text)) { if (!auto) toast("No link found in your clipboard.", true); return; }
+  if (auto && text === lastAutoPaste) return; // don't refill a link the user already cleared
+  lastAutoPaste = text;
+  $("linkUrl").value = /^t\.me\//i.test(text) ? "https://" + text : text;
+  if (auto) toast("Link pasted from your clipboard");
+  await checkLink();
+}
+$("linkPaste").onclick = () => guard(() => pasteLink(false));
 $("linkCheck").onclick = () => guard(checkLink);
 $("linkUrl").onkeydown = (e) => { if (e.key === "Enter") guard(checkLink); };
 $("linkUrl").onpaste = () => setTimeout(() => guard(checkLink), 0);
@@ -1074,6 +1088,11 @@ async function loadJobs() {
       actions.push(jobButton("Stop", "stop", "danger", async () => {
         if ((await ask("Stop this transfer? What was downloaded so far is deleted.", null)) === null) return;
         await api("POST", `/jobs/${j.id}/cancel`);
+      }));
+    } else if (j.state === "done" && j.kind !== "upload" && !(j.kind === "link" && j.to === "telegram") && j.dest !== undefined) {
+      actions.push(jobButton("Open folder", "folder", "", async () => {
+        if (mode === "drive2tg" || mode === "c2c") setMode("tg2drive");
+        await loadDrive(j.dest);
       }));
     } else if (j.state !== "done") {
       actions.push(jobButton("Retry", "refresh", "", () => api("POST", `/jobs/${j.id}/retry`)));

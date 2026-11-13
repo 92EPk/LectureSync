@@ -375,6 +375,8 @@ ipcMain.handle("colab:start", () => startColab());
 // Fallback: classic copy/paste of the cell into the user's own notebook.
 ipcMain.handle("colab:external", () => startColabExternal());
 ipcMain.handle("colab:copy", () => clipboard.writeText(buildCell(getToken())));
+// Smart paste for the "From link" tab: plain text only, nothing is written.
+ipcMain.handle("clipboard:read", () => (clipboard.readText() || "").slice(0, 2048));
 ipcMain.handle("open", (_e, url) => {
   // Only the handful of links the UI actually shows.
   if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com|microsoft\.com\/devicelogin|login\.microsoft\.com\/device|entra\.microsoft\.com|cs-fgssr\.pages\.dev)/i.test(url)) shell.openExternal(url);

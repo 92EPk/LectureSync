@@ -4,7 +4,7 @@
 
 # LectureSync
 
-**A zero-bandwidth desktop orchestrator that moves large lecture files between Telegram, Google Drive and the web (OneDrive, YouTube, Dropbox, direct links…) via ephemeral cloud compute — with automatic extraction, smart compression and playlist archiving.**
+**A zero-bandwidth desktop orchestrator that moves large lecture files between Telegram, Google Drive, OneDrive / SharePoint and the web (YouTube, Dropbox, MediaFire, direct links…) via ephemeral cloud compute — with automatic extraction, smart compression and playlist archiving.**
 
 [![Release](https://img.shields.io/github/v/release/92EPK/LectureSync?display_name=tag)](https://github.com/92EPK/LectureSync/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/92EPK/LectureSync/release.yml?label=build)](https://github.com/92EPK/LectureSync/actions/workflows/release.yml)
@@ -32,18 +32,29 @@ LectureSync removes the user's machine from the data path. The desktop app is a 
 | Local disk required | room for the archive and its extracted files | none |
 | Archive handling | manual | automatic (zip, rar, 7z, tar, split volumes) |
 | Telegram downloads | single stream | parallel streams |
-| Directions | one way at a time, by hand | Telegram ⇄ Drive, plus web links → either |
+| Directions | one way at a time, by hand | Telegram ⇄ Drive / OneDrive, Drive ⇄ OneDrive, web links → any |
 | Lecture videos | uploaded at full size | optional compression, much smaller files |
 
 ## Features
 
-### Three ways to move files
+### Four transfer pipelines — two clouds, both directions
 
-| Mode | What it does |
+Google Drive and **OneDrive / SharePoint** are first-class peers: every pipeline works with either cloud. Switch with the **Google Drive / OneDrive** toggle in the top bar.
+
+| Pipeline | What it does |
 |---|---|
-| 📥 **Telegram → Google Drive** | Pick files from any chat (or paste a `t.me/…` message link), choose a Drive folder, send. Archives are extracted automatically. |
-| 📤 **Google Drive → Telegram** | Tick files or folders in Drive and send them to any chat, group or channel. Folders go as one ZIP or file by file; anything over Telegram's file-size limit is split into parts — only after you agree. |
-| 🔗 **Link → Drive / Telegram** | Paste a public link and the Colab engine fetches it directly: **SharePoint / OneDrive, Google Drive shares, Dropbox, MediaFire, YouTube (videos & full playlists)** and direct file links. |
+| 📥 **Telegram → Google Drive / OneDrive** | Pick files from any chat (or paste a `t.me/…` link), choose a destination folder in either cloud, send. Archives (zip, rar, 7z, tar, split volumes) are extracted automatically. |
+| 📤 **Google Drive / OneDrive → Telegram** | Tick files or folders in either cloud and send them to any chat, group or channel. Folders go as one ZIP or file by file; files over Telegram's limit (2 GB, 4 GB Premium) are split — only after you agree. |
+| 🔗 **Link → Google Drive / OneDrive / Telegram** | Paste a public link — **SharePoint / OneDrive, Google Drive, Dropbox, MediaFire, YouTube (videos & playlists)** or a direct URL — and pick any of the three destinations. |
+| 🔁 **Cloud ⇄ Cloud** | Copy files and folders between Google Drive and OneDrive in either direction, datacenter to datacenter. |
+
+### OneDrive & SharePoint (Microsoft Graph)
+
+- **Personal and work / university accounts** (e.g. `@university.edu.eg`) — sign in with a browser OAuth flow (PKCE) or a **device code**, which works even where embedded sign-in is blocked.
+- **No admin consent required** — uses a public client ID with delegated, user-level permissions only.
+- **SharePoint document libraries** — your shared course sites appear next to *My files*.
+- **Full file manager** — browse, create, rename and delete (to the recycle bin), with live storage quota.
+- Large uploads use Graph **resumable upload sessions**, so multi-gigabyte files survive network hiccups.
 
 ### Link import options
 
@@ -53,12 +64,13 @@ LectureSync removes the user's machine from the data path. The desktop app is a 
 
 ### Core
 
-- **Zero local bandwidth** — lecture bytes travel `Telegram ⇄ Colab ⇄ Drive` (and `Web → Colab`) only.
+- **Zero local bandwidth** — lecture bytes travel `Telegram ⇄ Colab ⇄ Drive / OneDrive` (and `Web → Colab`) only.
 - **Job control** — live progress and speed for every transfer, with pause, resume, cancel and retry.
 - **Type-aware pipeline** — archives are extracted; multi-file archives get their own folder; regular files (PDF, MP4, …) are copied as-is; failed extraction falls back to copying the original.
-- **Parallel downloads** — large files are fetched in parallel chunks, with automatic sequential fallback.
+- **True parallel Telegram downloads** — up to 8 independent MTProto connections to the file's datacenter (FastTelethon-style, `LS_DL_WORKERS`), with flood-wait back-off and automatic single-stream fallback.
+- **C-accelerated encryption** — MTProto AES-IGE runs through `tgcrypto` (≈0.4 → 130+ MB/s vs. pure Python); if it can't install, the worker silently falls back and keeps working.
 - **QR-code Telegram login** — no SMS required (SMS is unreliable on many mobile networks and blocked for datacenter IPs). Phone code + 2FA remain available.
-- **Drive file manager** — browse, search, create, rename and delete (to Drive trash) folders without leaving the app.
+- **Drive & OneDrive file manager** — browse, search, create, rename and delete (to Drive trash) folders without leaving the app.
 - **Stable notebook reuse** — one Colab notebook per user, reopened every session; no notebook sprawl.
 - **Auto-retry on network drops** — transient failures retry automatically with growing back-off (configurable: off, 1, 2, 3 or 5 attempts); permanent errors (wrong password, missing file, no space) fail immediately.
 - **System tray & background transfers** — closing or minimising the window keeps transfers running in the tray, with live status in the tray menu.
@@ -120,15 +132,25 @@ Keep the app and the Colab tab open while jobs run.
 
 ## Architecture
 
-```text
- ┌──────────── Your computer ────────────┐          ┌────────── Your Google Colab VM ──────────┐
- │  LectureSync (Electron)               │  HTTPS   │  cloudflared ─► FastAPI + Telethon        │
- │  control plane · JSON only            │◄────────►│  data plane                               │
- └───────────────────────────────────────┘  token   │    Telegram ⇄ scratch ⇄ Drive             │
-                                                    │    Web links (yt-dlp / HTTP) ─► scratch   │
-                                                    │    scratch: 7-Zip · FFmpeg · split        │
-                                                    └───────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    APP["LectureSync desktop<br/>control plane · JSON only"] -- "HTTPS + token" --> TUN["cloudflared tunnel"]
+    subgraph VM["Your Google Colab VM — data plane"]
+        TUN --> API["FastAPI + Telethon worker"]
+        API --> TOOLS["7-Zip · FFmpeg · yt-dlp"]
+    end
+    API <-- "MTProto · 8 parallel · tgcrypto" --> TG[("Telegram")]
+    API <-- "FUSE mount" --> GD[("Google Drive")]
+    API <-- "Microsoft Graph" --> OD[("OneDrive / SharePoint")]
+    WEB[("Public links")] --> API
 ```
+
+### Real-world speed
+
+| Account | Typical Telegram throughput |
+|---|---|
+| Free | ~5–6 MB/s (Telegram caps bandwidth per free account, regardless of connection count) — 1 GB in ≈3 min |
+| Premium | 30–50+ MB/s with the same code |
 
 Full design, threat model and decision records: **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**.
 

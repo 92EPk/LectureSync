@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("ls", {
   startColab: () => ipcRenderer.invoke("colab:start"),
   startColabExternal: () => ipcRenderer.invoke("colab:external"),
   copyCell: () => ipcRenderer.invoke("colab:copy"),
+  readClipboard: () => ipcRenderer.invoke("clipboard:read"),
   open: (url) => ipcRenderer.invoke("open", url),
   checkUpdate: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: (url) => ipcRenderer.invoke("update:download", url),

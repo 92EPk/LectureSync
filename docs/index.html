@@ -1,239 +1,159 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" dir="ltr" data-theme="dark">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LectureSync — Move lectures between Telegram, Drive and the web. Zero bandwidth.</title>
-  <meta name="description" content="Free, open-source desktop app that moves multi-gigabyte lectures between Telegram, Google Drive, OneDrive and web links through your own Google Colab — without touching your data plan." />
-  <meta property="og:title" content="LectureSync — Zero-bandwidth lecture transfers" />
-  <meta property="og:description" content="Telegram ⇄ Cloud ⇄ Web links, executed in your own Colab. Windows, macOS, Linux. MIT licensed." />
-  <meta property="og:type" content="website" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="theme-color" content="#08090b" />
-  <link rel="icon" href="assets/logo.png" />
-  <script>(function(){var t=localStorage.getItem("ls-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");document.documentElement.dataset.theme=t;})();</script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=5" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LectureSync — Telegram, Google Drive & OneDrive transfers with zero bandwidth</title>
+<meta name="description" content="Free, open-source desktop app that moves multi-gigabyte lectures between Telegram, Google Drive, OneDrive/SharePoint and web links inside your own Google Colab — without touching your data plan." />
+<meta property="og:title" content="LectureSync — Your lectures move. Your data plan doesn't." />
+<meta property="og:description" content="Four pipelines across Telegram, Google Drive, OneDrive and the web, executed in your own Colab. Windows, macOS, Linux. MIT." />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="theme-color" content="#0b0d0c" />
+<link rel="icon" href="assets/logo.png" />
+<script>(function(){var d=document.documentElement,t=localStorage.getItem("ls-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");d.dataset.theme=t;var l=localStorage.getItem("ls-lang")||((navigator.language||"").startsWith("ar")?"ar":"en");d.lang=l;d.dir=l==="ar"?"rtl":"ltr";})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body>
-  <div class="bg-grid" aria-hidden="true"></div>
-  <header class="nav">
-    <div class="wrap nav-in">
-      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="24" height="24" />LectureSync</a>
-      <nav class="links">
-        <a href="#modes">Modes</a>
-        <a href="#how">How it works</a>
-        <a href="#features">Features</a>
-        <a href="#download">Download</a>
-        <a href="#faq">FAQ</a>
-      </nav>
-      <div class="tools">
-        <button id="themeBtn" class="icon-btn" aria-label="Toggle theme">
-          <svg class="sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-          <svg class="moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-        </button>
-        <a class="btn sm" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 3.87c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span>Star</span><span id="stars" class="count">—</span>
-        </a>
-      </div>
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="26" height="26" />LectureSync</a>
+    <nav class="links">
+      <a href="#pipelines" data-k="nav1">Pipelines</a>
+      <a href="#how" data-k="nav2">How it works</a>
+      <a href="#features" data-k="nav3">Features</a>
+      <a href="#download" data-k="nav4">Download</a>
+      <a href="#faq" data-k="nav5">FAQ</a>
+    </nav>
+    <div class="tools">
+      <button id="langBtn" class="chip" aria-label="Language">عربي</button>
+      <button id="themeBtn" class="chip icon" aria-label="Toggle theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
+      <a class="chip gh" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">★ <span id="stars">GitHub</span></a>
     </div>
-  </header>
+  </div>
+</header>
 
-  <main id="top">
-    <section class="hero wrap">
-      <a class="pill-link" href="https://github.com/92EPK/LectureSync/releases/latest" target="_blank" rel="noopener">
-        <span class="dot"></span><span id="relPill">New release</span><span class="sep"></span><span>Open source · MIT</span><span class="arr">→</span>
-      </a>
-      <h1>Your lectures move.<br/><em>Your data plan doesn’t.</em></h1>
-      <p class="lead">LectureSync is a desktop app that moves multi-gigabyte lectures between <b>Telegram</b>, <b>Google Drive</b>, <b>OneDrive</b> and <b>web links</b> — executed entirely inside your own Google Colab. Your connection only sends a few kilobytes of commands.</p>
+<main id="top">
+  <section class="hero wrap">
+    <div class="hero-copy">
+      <a class="badge" href="https://github.com/92EPK/LectureSync/releases/latest" target="_blank" rel="noopener"><i></i><span id="relPill">Latest release</span><b class="badge-go">→</b></a>
+      <h1 data-k="h1">Your lectures move.<br /><em>Your data plan doesn’t.</em></h1>
+      <p class="lead" data-k="lead">LectureSync moves multi‑gigabyte files between <b>Telegram</b>, <b>Google Drive</b>, <b>OneDrive / SharePoint</b> and <b>web links</b> — inside your own Google Colab. Your connection only carries a few kilobytes of commands.</p>
       <div class="cta">
-        <a id="primaryBtn" class="btn primary lg" href="https://github.com/92EPK/LectureSync/releases/latest">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
-          <span id="primaryLabel">Download</span>
-        </a>
-        <a class="btn lg" href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">View source</a>
+        <a id="primaryBtn" class="btn primary" href="#download"><span id="primaryLabel" data-k="dl">Download free</span> ↓</a>
+        <a class="btn ghost" href="#how" data-k="see">See how it works</a>
       </div>
-      <p class="meta"><span id="releaseMeta">…</span></p>
-      <p class="other-os">Also available for
-        <a href="#download" data-os-link="windows">Windows</a><span>·</span>
-        <a href="#download" data-os-link="mac">macOS</a><span>·</span>
-        <a href="#download" data-os-link="linux">Linux</a>
-      </p>
-    </section>
-
-    <section id="modes" class="wrap showcase">
-      <div class="seg" role="tablist">
-        <button class="mtab on" data-m="0" role="tab"><span>01</span>Telegram → Cloud</button>
-        <button class="mtab" data-m="1" role="tab"><span>02</span>Cloud → Telegram</button>
-        <button class="mtab" data-m="2" role="tab"><span>03</span>Web link → Cloud / Telegram</button>
-      </div>
-      <div class="window">
-        <div class="win-bar"><i></i><i></i><i></i><span>LectureSync</span></div>
-        <div class="mpane on">
-          <img class="th-dark" src="assets/app-tg2drive-dark.webp" alt="Telegram files, Google Drive folder and live jobs" width="2160" height="1290" />
-          <img class="th-light" src="assets/app-tg2drive-light.webp" alt="Telegram files, Google Drive folder and live jobs" width="2160" height="1290" />
-        </div>
-        <div class="mpane">
-          <img class="th-dark" src="assets/app-drive2tg-dark.webp" alt="Sending selected Drive folders to Telegram" width="2160" height="1290" loading="lazy" />
-          <img class="th-light" src="assets/app-drive2tg-light.webp" alt="Sending selected Drive folders to Telegram" width="2160" height="1290" loading="lazy" />
-        </div>
-        <div class="mpane">
-          <img class="th-dark" src="assets/app-link-dark.webp" alt="Importing a YouTube playlist from a link" width="2160" height="1290" loading="lazy" />
-          <img class="th-light" src="assets/app-link-light.webp" alt="Importing a YouTube playlist from a link" width="2160" height="1290" loading="lazy" />
-        </div>
-      </div>
-      <div class="captions">
-        <p class="mcap on">Pick a chat, tick split RAR parts and press <b>Send</b>. Colab downloads, extracts and saves them into Google Drive or OneDrive.</p>
-        <p class="mcap">Tick folders in your cloud and send them to any chat or channel — as one ZIP or file by file, split past Telegram’s 2 GB limit only if you agree.</p>
-        <p class="mcap">Paste a YouTube, OneDrive, Drive, Dropbox, MediaFire or <code>t.me/…</code> link. Optionally shrink videos and bundle playlists into one 7-Zip.</p>
-      </div>
-    </section>
-
-    <section class="wrap stats">
-      <div><b>0 MB</b><span>of your data plan used</span></div>
-      <div><b>0 GB</b><span>written to your disk</span></div>
-      <div><b>8×</b><span>parallel MTProto streams</span></div>
-      <div><b>$0</b><span>runs on Colab’s free tier</span></div>
-    </section>
-
-    <section id="how" class="wrap section">
-      <div class="head">
-        <p class="eyebrow">How it works</p>
-        <h2>A remote control for a <em>cloud machine.</em></h2>
-        <p class="sub">LectureSync splits the work in two. The app on your laptop only decides; your Colab session does all the heavy lifting on Google’s network.</p>
-      </div>
-      <div class="arch">
-        <div class="node">
-          <small>Control plane · your device</small>
-          <h3>LectureSync app</h3>
-          <p>Browse chats and folders, pick files, watch progress. Sends tiny JSON commands.</p>
-          <code>~ 4 KB per job</code>
-        </div>
-        <div class="link"><span>commands ↓</span><i></i><span>↑ progress</span></div>
-        <div class="node hot">
-          <small>Data plane · your Google Colab</small>
-          <h3>Transfer engine</h3>
-          <p>Downloads, extracts, compresses and uploads at datacenter speed. Disappears when you close it.</p>
-          <code>tens of MB/s</code>
-        </div>
-        <div class="link"><span>gigabytes</span><i></i><span>⇄</span></div>
-        <div class="node">
-          <small>Sources &amp; destinations</small>
-          <h3>Telegram · Drive · OneDrive · Web</h3>
-          <p>Files travel cloud-to-cloud and never pass through your home connection.</p>
-          <code>0 bytes on your line</code>
-        </div>
-      </div>
-      <div class="compare">
-        <div class="cmp">
-          <h4>Doing it yourself</h4>
-          <ul>
-            <li><span>Download 10 GB</span><b class="bad">10 GB</b></li>
-            <li><span>Extract on your laptop</span><b class="bad">+10 GB disk</b></li>
-            <li><span>Upload to Drive</span><b class="bad">10 GB</b></li>
-            <li class="tot"><span>Data plan burned</span><b class="bad">20 GB</b></li>
-          </ul>
-        </div>
-        <div class="cmp good">
-          <h4>With LectureSync</h4>
-          <ul>
-            <li><span>Press Send</span><b>4 KB</b></li>
-            <li><span>Colab downloads &amp; extracts</span><b>in the cloud</b></li>
-            <li><span>Colab uploads to Drive</span><b>in the cloud</b></li>
-            <li class="tot"><span>Data plan burned</span><b>≈ 0</b></li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section id="features" class="wrap section">
-      <div class="head">
-        <p class="eyebrow">Features</p>
-        <h2>Small app. <em>Serious engine.</em></h2>
-      </div>
-      <div class="bento">
-        <article class="b b-wide"><h3>Three modes, one workspace</h3><p>Telegram → Cloud, Cloud → Telegram and Web link → Cloud / Telegram, side by side with a live Jobs panel: speed, ETA, pause and stop.</p>
-          <div class="chips"><span>Telegram</span><span>Google Drive</span><span>OneDrive / SharePoint</span><span>YouTube</span><span>Dropbox</span><span>MediaFire</span><span>t.me links</span></div></article>
-        <article class="b"><h3>Parallel downloads</h3><p>8 concurrent MTProto streams with <code>tgcrypto</code> — from ~1.3 MB/s to tens of MB/s.</p></article>
-        <article class="b"><h3>Split archives, handled</h3><p>Tick every <code>.partN.rar</code>; they’re joined and extracted into the folder you’re viewing.</p></article>
-        <article class="b"><h3>Lecture-aware compression</h3><p>Videos shrink up to 70% at 480p, 720p or 1080p with slides still sharp. Documents go into 7-Zip.</p></article>
-        <article class="b"><h3>Send anywhere</h3><p>Search any chat, or type an <code>@username</code> or <code>t.me</code> link. Validated before the job starts.</p></article>
-        <article class="b b-wide"><h3>Zero custody</h3><p>Your Telegram keys are encrypted on your device. Files live in your own Google account. There is no LectureSync server — the developer never sees anything.</p></article>
-      </div>
-    </section>
-
-    <section id="download" class="wrap section">
-      <div class="head">
-        <p class="eyebrow">Download</p>
-        <h2>Free, for every desktop.</h2>
-        <p class="sub">Each release is built automatically by GitHub Actions from the public source code.</p>
-      </div>
-      <div class="platforms">
-        <article class="card" data-os="windows">
-          <div class="card-h"><h3>Windows</h3><span class="badge">Your device</span></div>
-          <p class="muted">10 / 11 · x64</p>
-          <ul class="files" data-match="\.exe$"></ul>
-          <p class="note">SmartScreen? <b>More info → Run anyway</b></p>
-        </article>
-        <article class="card" data-os="mac">
-          <div class="card-h"><h3>macOS</h3><span class="badge">Your device</span></div>
-          <p class="muted">11+ · Apple Silicon &amp; Intel</p>
-          <ul class="files" data-match="\.dmg$|mac.*\.zip$"></ul>
-          <p class="note">“Damaged”? <code>xattr -cr /Applications/LectureSync.app</code></p>
-        </article>
-        <article class="card" data-os="linux">
-          <div class="card-h"><h3>Linux</h3><span class="badge">Your device</span></div>
-          <p class="muted">x86-64 · AppImage / .deb</p>
-          <ul class="files" data-match="\.AppImage$|\.deb$"></ul>
-          <p class="note"><code>sudo apt install ./LectureSync_*.deb</code></p>
-        </article>
-      </div>
-      <div class="dl-foot">
-        <details><summary>Verify your download (SHA-256)</summary><pre id="sums">—</pre></details>
-        <a href="https://github.com/92EPK/LectureSync/releases" target="_blank" rel="noopener">All releases &amp; notes →</a>
-      </div>
-    </section>
-
-    <section id="start" class="wrap section">
-      <div class="head"><p class="eyebrow">Get started</p><h2>Running in three steps.</h2></div>
-      <ol class="steps">
-        <li><span>01</span><h3>Add Telegram keys</h3><p>Create an API ID and Hash at <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>. Stored encrypted on your device, once.</p></li>
-        <li><span>02</span><h3>Start the cloud engine</h3><p>The app opens the <a href="https://colab.research.google.com/github/92EPK/LectureSync/blob/main/LectureSync.ipynb" target="_blank" rel="noopener">Colab notebook</a>. Press Run, allow Drive, click Connect.</p></li>
-        <li><span>03</span><h3>Pick a mode and go</h3><p>Scan the QR code to sign in, choose files or paste a link, pick a destination, start.</p></li>
-      </ol>
-    </section>
-
-    <section id="faq" class="wrap section narrow">
-      <div class="head"><p class="eyebrow">FAQ</p><h2>Questions</h2></div>
-      <div class="faq">
-        <details><summary>Is any of my data sent to the developer?</summary><p>No. Everything runs on your own Google account and Telegram keys. There is no LectureSync server.</p></details>
-        <details><summary>Why does my system warn me when installing?</summary><p>The app isn’t code-signed yet. The warning appears for any unsigned app; you can verify every file with its SHA-256 checksum.</p></details>
-        <details><summary>Does it cost anything?</summary><p>No. It runs on Colab’s free tier and is MIT-licensed open source.</p></details>
-        <details><summary>Why does Google ask for Drive permission each session?</summary><p>Colab machines are temporary, and Google requires a fresh consent click every time a new one connects to your Drive. It’s a one-click step.</p></details>
-        <details><summary>Can I use it outside university?</summary><p>Yes — any chat you can access, any Drive or OneDrive folder, any public link.</p></details>
-      </div>
-    </section>
-
-    <section class="wrap">
-      <div class="final">
-        <p class="eyebrow">Student initiative · FGSSR, Cairo University</p>
-        <h2>Built by a student, <em>for students.</em></h2>
-        <p class="sub">Designed and built by <b>Ahmed Omran</b>, CS Diploma — so nobody has to burn their home internet on lecture files again.</p>
-        <div class="cta"><a class="btn primary lg" href="#download">Download LectureSync</a><a class="btn lg" href="https://cs-fgssr.pages.dev/" target="_blank" rel="noopener">cs-fgssr.pages.dev ↗</a></div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="foot">
-    <div class="wrap foot-in">
-      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="20" height="20" />LectureSync</a>
-      <span class="muted">© 2026 Ahmed Omran · MIT License</span>
-      <nav><a href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/92EPK/LectureSync/blob/main/SYSTEM_DESIGN.md" target="_blank" rel="noopener">System design</a><a href="https://github.com/92EPK/LectureSync/issues" target="_blank" rel="noopener">Issues</a></nav>
+      <p class="meta" id="releaseMeta">Windows · macOS · Linux</p>
     </div>
-  </footer>
-  <script src="app.js?v=5"></script>
+    <div class="shot">
+      <div class="shot-tabs">
+        <button class="on" data-i="0" data-k="t1">Telegram → Cloud</button>
+        <button data-i="1" data-k="t2">Cloud → Telegram</button>
+        <button data-i="2" data-k="t3">Links</button>
+        <button data-i="3" data-k="t4">Cloud ⇄ Cloud</button>
+      </div>
+      <div class="shot-frame">
+        <img class="on" data-dark="assets/app-tg2drive-dark.webp" data-light="assets/app-tg2drive-light.webp" alt="Telegram to cloud screen" />
+        <img data-dark="assets/app-drive2tg-dark.webp" data-light="assets/app-drive2tg-light.webp" alt="Cloud to Telegram screen" />
+        <img data-dark="assets/app-link-dark.webp" data-light="assets/app-link-light.webp" alt="Link import screen" />
+        <img data-dark="assets/app-c2c-dark.webp" data-light="assets/app-c2c-light.webp" alt="Cloud to cloud screen" />
+      </div>
+    </div>
+  </section>
+
+  <section class="stats wrap">
+    <div><b>≈ 0 MB</b><span data-k="s1">of your data plan per lecture</span></div>
+    <div><b>8×</b><span data-k="s2">parallel Telegram connections</span></div>
+    <div><b>130+ MB/s</b><span data-k="s3">C‑accelerated decryption</span></div>
+    <div><b>2</b><span data-k="s4">clouds, every direction</span></div>
+  </section>
+
+  <section id="pipelines" class="wrap sec">
+    <p class="eyebrow" data-k="e1">01 — Pipelines</p>
+    <h2 data-k="h2a">Four pipelines. Two clouds. Every direction.</h2>
+    <div class="pipes">
+      <article><span class="n">A</span><h3 data-k="p1t">Telegram → Drive / OneDrive</h3><p data-k="p1d">Pick files from any chat or paste a t.me link. Archives — zip, rar, 7z, split volumes — are extracted on arrival.</p></article>
+      <article><span class="n">B</span><h3 data-k="p2t">Drive / OneDrive → Telegram</h3><p data-k="p2d">Send files or whole folders to any chat or channel. Files over Telegram’s limit are split — only if you agree.</p></article>
+      <article><span class="n">C</span><h3 data-k="p3t">Link → anywhere</h3><p data-k="p3d">YouTube (incl. playlists), SharePoint, OneDrive, Drive, Dropbox, MediaFire or a direct URL — to either cloud or Telegram.</p></article>
+      <article><span class="n">D</span><h3 data-k="p4t">Drive ⇄ OneDrive</h3><p data-k="p4d">Copy between Google and Microsoft clouds datacenter‑to‑datacenter, in both directions.</p></article>
+    </div>
+  </section>
+
+  <section id="how" class="wrap sec">
+    <p class="eyebrow" data-k="e2">02 — How it works</p>
+    <h2 data-k="h2b">Your PC decides. Google’s network does the heavy lifting.</h2>
+    <div class="flow">
+      <div class="node pc"><small data-k="f1s">Your computer</small><b data-k="f1">LectureSync app</b><span data-k="f1d">commands only</span></div>
+      <div class="wire"><i></i><em>&lt; 1 MB</em></div>
+      <div class="node vm"><small data-k="f2s">Your Colab VM</small><b>Worker</b><span>Telethon · 7‑Zip · FFmpeg · yt‑dlp</span></div>
+      <div class="wire fat"><i></i><em data-k="gb">GBs</em></div>
+      <div class="node clouds"><b>Telegram</b><b>Google Drive</b><b>OneDrive</b><b>Web</b></div>
+    </div>
+    <table class="cmp">
+      <thead><tr><th></th><th data-k="c0a">Manual</th><th>LectureSync</th></tr></thead>
+      <tbody>
+        <tr><td data-k="c1">Data over your connection</td><td data-k="c1a">File size × 2</td><td><bdi dir="ltr">&lt; 1 MB</bdi></td></tr>
+        <tr><td data-k="c2">Local disk needed</td><td data-k="c2a">Archive + extracted copy</td><td data-k="none">None</td></tr>
+        <tr><td data-k="c3">Archive extraction</td><td data-k="c3a">By hand</td><td data-k="auto">Automatic</td></tr>
+        <tr><td data-k="c4">Clouds</td><td data-k="c4a">One at a time</td><td data-k="c4b">Drive + OneDrive, both ways</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="features" class="wrap sec">
+    <p class="eyebrow" data-k="e3">03 — Features</p>
+    <h2 data-k="h2c">Built for real course material.</h2>
+    <div class="bento">
+      <div class="b big"><h3 data-k="b1t">OneDrive & SharePoint, done properly</h3><p data-k="b1d">Personal and university accounts via browser sign‑in or device code. No admin consent. SharePoint course libraries, file manager and live quota.</p></div>
+      <div class="b"><h3 data-k="b2t">Parallel MTProto</h3><p data-k="b2d">Up to 8 independent connections to the file’s datacenter, with flood‑wait back‑off.</p></div>
+      <div class="b"><h3 data-k="b3t">tgcrypto inside</h3><p data-k="b3d">Encryption in C: from 0.4 to 130+ MB/s. Falls back safely if unavailable.</p></div>
+      <div class="b"><h3 data-k="b4t">Smart compression</h3><p data-k="b4d">Lecture‑tuned FFmpeg re‑encode keeps slides sharp at a fraction of the size.</p></div>
+      <div class="b"><h3 data-k="b5t">Playlists your way</h3><p data-k="b5d">Separate videos, or one 7‑Zip archive split into Telegram‑sized parts.</p></div>
+      <div class="b wide"><h3 data-k="b6t">Private by design</h3><p data-k="b6d">One‑click secure link from Colab, keys stored in your OS keychain, sessions kept in your own Drive. Nothing passes through us.</p></div>
+    </div>
+  </section>
+
+  <section id="download" class="wrap sec">
+    <p class="eyebrow" data-k="e4">04 — Download</p>
+    <h2 data-k="h2d">Free for every student.</h2>
+    <div class="dl">
+      <div class="card" data-os="windows"><h3>Windows</h3><small>10 / 11 · x64</small><ul class="files" data-match="\.exe$"></ul></div>
+      <div class="card" data-os="mac"><h3>macOS</h3><small>Apple Silicon · Intel</small><ul class="files" data-match="\.(dmg|zip)$"></ul></div>
+      <div class="card" data-os="linux"><h3>Linux</h3><small>AppImage · .deb</small><ul class="files" data-match="\.(AppImage|deb)$"></ul></div>
+    </div>
+    <p class="note" data-k="unsigned">Builds aren’t code‑signed yet, so Windows or macOS may warn on first launch. Verify with the SHA‑256 checksums published with every release.</p>
+    <ol class="steps">
+      <li data-k="q1">Add your Telegram API keys from my.telegram.org.</li>
+      <li data-k="q2">Click “Start Colab engine”, then Run in Colab.</li>
+      <li data-k="q3">Press “Connect to LectureSync” — no copying, no ports.</li>
+      <li data-k="q4">Scan the QR code once, choose a pipeline, send.</li>
+    </ol>
+  </section>
+
+  <section id="faq" class="wrap sec">
+    <p class="eyebrow" data-k="e5">05 — FAQ</p>
+    <h2 data-k="h2e">Questions, answered.</h2>
+    <details><summary data-k="fa1">Does it really not use my internet?</summary><p data-k="fb1">File bytes travel only between Telegram, Google, Microsoft and your Colab VM. Your PC sends small JSON commands and receives progress.</p></details>
+    <details><summary data-k="fa2">How fast are Telegram downloads?</summary><p data-k="fb2">Free Telegram accounts are capped by Telegram at around 5–6 MB/s — about 3 minutes per gigabyte. Premium accounts reach 30–50+ MB/s with the same app.</p></details>
+    <details><summary data-k="fa3">Can I use my university Microsoft account?</summary><p data-k="fb3">Yes. Sign in with a device code if the browser flow is restricted; no IT admin approval is required.</p></details>
+    <details><summary data-k="fa4">Why does Colab say “not authored by Google”?</summary><p data-k="fb4">Google shows this for every notebook opened from GitHub. Choose “Run anyway” — the full code is visible in the notebook.</p></details>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div class="foot-brand">
+      <a class="brand" href="#top"><img src="assets/logo.png" alt="" width="26" height="26" />LectureSync</a>
+      <p data-k="foot">Built by <a class="author" href="https://github.com/92EPK" target="_blank" rel="noopener">Ahmed Omran</a> — a free student initiative for the CS Diploma, FGSSR.</p>
+    </div>
+    <nav class="foot-col"><b data-k="fc1">Product</b><a href="#pipelines" data-k="nav1">Pipelines</a><a href="#features" data-k="nav3">Features</a><a href="#download" data-k="nav4">Download</a><a href="#faq" data-k="nav5">FAQ</a></nav>
+    <nav class="foot-col"><b data-k="fc2">Project</b><a href="https://github.com/92EPK/LectureSync" target="_blank" rel="noopener">Source code</a><a href="https://github.com/92EPK/LectureSync/releases" target="_blank" rel="noopener" data-k="fc3">Releases</a><a href="https://github.com/92EPK/LectureSync/issues" target="_blank" rel="noopener" data-k="fc4">Report an issue</a><a href="https://github.com/92EPK" target="_blank" rel="noopener">@92EPK</a></nav>
+  </div>
+  <div class="wrap foot-bot"><span>© <span id="yr">2026</span> Ahmed Omran · MIT License</span><a href="#top" data-k="fc5">Back to top ↑</a></div>
+</footer>
+<script src="app.js?v=6"></script>
 </body>
 </html>

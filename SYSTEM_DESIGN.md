@@ -52,9 +52,10 @@ flowchart LR
     end
 
     MAIN -- "HTTPS + token<br/>JSON only" --> TUN
-    JOB <-- "MTProto, 8 parallel streams" --> TG[("Telegram")]
+    JOB <-- "MTProto, 8 parallel senders, tgcrypto" --> TG[("Telegram")]
     JOB <-- "FUSE mount" --> GD[("Google Drive")]
-    JOB -- "HTTPS" --> WEB[("Public links<br/>OneDrive · YouTube · Dropbox …")]
+    JOB <-- "Microsoft Graph<br/>resumable uploads" --> OD[("OneDrive / SharePoint")]
+    JOB -- "HTTPS" --> WEB[("Public links<br/>YouTube · Dropbox · MediaFire …")]
 ```
 
 | Part | Technology | Responsibility |
@@ -129,9 +130,26 @@ stateDiagram-v2
 
 Each job works in its own scratch directory, which is deleted on success, failure or cancellation.
 
+## 5b. Dual-cloud model
+
+Google Drive and OneDrive are interchangeable **storage providers** behind one interface (list, mkdir, rename, delete, quota, read, write). Every pipeline takes a provider argument, which gives four pipelines:
+
+| Pipeline | Source → Destination |
+|---|---|
+| Telegram → Cloud | Telegram → Drive **or** OneDrive |
+| Cloud → Telegram | Drive **or** OneDrive → Telegram |
+| Link → Anywhere | Web → Drive / OneDrive / Telegram |
+| Cloud ⇄ Cloud | Drive ⇄ OneDrive (`POST /copies`) |
+
+**Drive** is reached through Colab's FUSE mount. **OneDrive** goes through Microsoft Graph: browser OAuth with PKCE or the Device Code flow (works for university tenants), a public client ID needing no admin consent, SharePoint libraries discovered via `/sites?search=*`, and upload sessions for large files. Tokens stay in the user's own Drive and Colab VM.
+
 ## 6. Engineering problems I solved
 
 ### 6.1 Telegram downloads were too slow
+
+*Update:* two separate bottlenecks were found. **Crypto:** without a C backend, Telethon decrypts AES-IGE in pure Python (~0.4 MB/s measured). `cryptg` needs a Rust build that broke on Colab, so the worker patches Telethon to use **`tgcrypto`** (prebuilt wheels, ~137 MB/s measured, output byte-identical) and falls back silently if it is missing. **Transport:** `iter_download` segments share one MTProto socket, so the worker opens N independent `MTProtoSender`s to the file's DC, imports authorization once and reuses the key, and pulls `GetFileRequest` parts from a shared queue via `client._call`. Free accounts are still capped by Telegram at ~5–6 MB/s per account; Premium lifts it.
+
+### 6.1a Original approach
 Telethon downloads one file sequentially, and on Colab I measured about **1.3 MB/s**. Two causes:
 
 1. **One stream.** I split each file into 512 KB-aligned ranges and fetch them with **8 concurrent `GetFileRequest` workers** that write by offset. Throughput went from ~1.3 MB/s to **tens of MB/s**.
