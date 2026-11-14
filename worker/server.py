@@ -1413,13 +1413,16 @@ async def _run_upload(job: Job) -> None:
 # ---------------------------------------------------------------- Link -> Drive / Telegram
 # Only public / "anyone with the link" shares are supported: no account sign-in is ever asked.
 
+import html
 import json
 import urllib.parse
 import urllib.request
 import threading
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
-VIDEO_SITES = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "loom.com")
+VIDEO_SITES = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "loom.com",
+               "facebook.com", "fb.watch", "x.com", "twitter.com", "soundcloud.com", "ted.com")
+MEGA_HOSTS = ("mega.nz", "mega.co.nz", "mega.io")
 VIDEO_EXT = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv", ".ts", ".mpg", ".mpeg", ".3gp")
 # Already-compressed formats: 7z barely shrinks these, so we don't waste time on them.
 PACKED_EXT = ARCHIVE_EXT + (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp3", ".m4a", ".aac", ".ogg",
@@ -1448,6 +1451,8 @@ def detect_platform(url: str) -> str:
         return "dropbox"
     if h.endswith("mediafire.com"):
         return "mediafire"
+    if any(h == s or h.endswith("." + s) for s in MEGA_HOSTS):
+        return "mega"
     if any(h == s or h.endswith("." + s) for s in VIDEO_SITES):
         return "youtube"
     return "direct"
@@ -1507,7 +1512,7 @@ def resolve_url(raw: str) -> tuple[str, str]:
         m = re.search(r"/d/([\w-]{10,})", u.path)
         fid = m.group(1) if m else (qs.get("id") or [""])[0]
         if not fid:
-            raise HTTPException(status_code=400, detail="this Google Drive link has no file id (folders aren't supported yet)")
+            raise HTTPException(status_code=400, detail="this Google Drive link has no file id")
         return _gdrive_direct(fid), platform
     if platform == "dropbox":
         q = {k: v for k, v in qs.items() if k != "dl"}
@@ -1525,13 +1530,216 @@ def resolve_url(raw: str) -> tuple[str, str]:
     return url, platform
 
 
+# ---- whole-folder links (Google Drive folders, Dropbox shared folders, MEGA)
+
+def is_folder_link(url: str, platform: str) -> bool:
+    u = urllib.parse.urlparse(url.strip())
+    if platform == "gdrive":
+        return "/folders/" in u.path or "folderview" in u.path
+    if platform == "dropbox":
+        return u.path.startswith(("/sh/", "/scl/fo/"))
+    if platform == "mega":
+        return "/folder/" in u.path or u.fragment.startswith("F!")
+    return False
+
+
+def _clean_part(name: str) -> str:
+    """One safe path component from a remote name (no traversal, no separators)."""
+    n = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", html.unescape(name or "")).strip().strip(".")
+    return n[:180] or "untitled"
+
+
+def _gdrive_folder_id(url: str) -> str:
+    u = urllib.parse.urlparse(url)
+    m = re.search(r"/folders/([\w-]{10,})", u.path)
+    fid = m.group(1) if m else (urllib.parse.parse_qs(u.query).get("id") or [""])[0]
+    if not fid:
+        raise HTTPException(status_code=400, detail="this Google Drive folder link has no folder id")
+    return fid
+
+
+GDOC_EXPORT = {"document": "docx", "spreadsheets": "xlsx", "presentation": "pptx"}
+
+
+def _gdrive_tree(url: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """Public Drive folder -> (folder name, [(file id, file name, sub-path)]) walking every sub-folder."""
+    root_id = _gdrive_folder_id(url)
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    root_name = ""
+
+    def walk(fid: str, rel: str, depth: int) -> None:
+        nonlocal root_name
+        if fid in seen or depth > 25 or len(out) > 10000:
+            return
+        seen.add(fid)
+        try:
+            page = _http_get_text(f"https://drive.google.com/embeddedfolderview?id={fid}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Google Drive folder could not be opened: {e}")
+        if "flip-entry" not in page and ("accounts.google.com" in page or "ServiceLogin" in page):
+            raise HTTPException(status_code=400, detail="this Google Drive folder isn't public — share it as 'anyone with the link'")
+        if depth == 0:
+            t = re.search(r"<title>(.*?)</title>", page, re.S)
+            root_name = _clean_part(t.group(1) if t else "Drive folder")
+        for m in re.finditer(r'<div class="flip-entry" id="entry-([\w-]+)".*?<a href="([^"]+)".*?'
+                             r'<div class="flip-entry-title">(.*?)</div>', page, re.S):
+            iid, href, title = m.group(1), m.group(2), _clean_part(m.group(3))
+            if "/folders/" in href:
+                walk(iid, f"{rel}/{title}" if rel else title, depth + 1)
+            elif "docs.google.com/" in href:
+                # Google Docs / Sheets / Slides have no file to download: export them as Office files.
+                kind = next((k for k in GDOC_EXPORT if f"/{k}/" in href), "")
+                if kind:
+                    ext = GDOC_EXPORT[kind]
+                    url_ = f"https://docs.google.com/{kind}/d/{iid}/export?format={ext}"
+                    out.append(("url:" + url_, title if title.lower().endswith("." + ext) else f"{title}.{ext}", rel))
+            else:
+                out.append((iid, title, rel))
+
+    walk(root_id, "", 0)
+    if not out:
+        raise HTTPException(status_code=400, detail="this Google Drive folder is empty or not shared publicly")
+    return root_name, out
+
+
+def _ensure_megatools() -> None:
+    if shutil.which("megadl"):
+        return
+    subprocess.run(["apt-get", "install", "-y", "-qq", "megatools"], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not shutil.which("megadl"):
+        raise RuntimeError("MEGA support could not be installed on this Colab session (megatools)")
+
+
+def _tree_size(p: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+async def _mega_download(job: Job, url: str, out: Path) -> None:
+    await asyncio.to_thread(_ensure_megatools)
+    out.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        "megadl", "--no-progress", "--path", str(out), url.strip(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    t0 = time.time()
+    try:
+        while proc.returncode is None:
+            if job.state == "cancelled":
+                raise asyncio.CancelledError()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+            got = _tree_size(out)
+            job.speed = got / max(time.time() - t0, 0.1)
+            if job.size:
+                job.progress = min(got / job.size, 0.99)
+        err = (await proc.stderr.read()).decode(errors="ignore") if proc.stderr else ""
+        if proc.returncode != 0:
+            low = err.lower()
+            if "quota" in low or "bandwidth" in low or "509" in low:
+                raise RuntimeError("MEGA transfer quota reached for this Colab session — wait a few hours or restart the cloud engine and try again")
+            if "enoent" in low or "not found" in low or "-9" in low:
+                raise RuntimeError("MEGA: this link was removed or is invalid")
+            if "key" in low and "invalid" in low:
+                raise RuntimeError("MEGA: the link is missing its decryption key (the part after #)")
+            raise RuntimeError("MEGA: " + (err.strip().splitlines() or ["download failed (link removed or quota reached)"])[-1][-200:])
+    finally:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+
+async def _run_tree(job: Job, work: Path, gate_ok, entity, limit: int) -> None:
+    """Folder links and MEGA: pull the whole tree and recreate it at the destination."""
+    loop_files: list[tuple[Path, str]] = []
+    if job.platform == "gdrive":
+        root, items = await asyncio.to_thread(_gdrive_tree, job.url)
+        job.parts, failed = len(items), 0
+        for i, (fid, fname, rel) in enumerate(items, 1):
+            await _wait_if_paused(job, "downloading")
+            job.state, job.progress, job.speed = f"downloading {i}/{len(items)}", 0.0, 0.0
+            t0 = time.time()
+
+            def on_chunk(d: int, t: int, t0=t0) -> None:
+                job.progress = d / t if t else 0.0
+                job.speed = d / max(time.time() - t0, 0.1)
+            item = work / f"item{i}"
+            item.mkdir()
+            try:
+                direct = fid[4:] if fid.startswith("url:") else await asyncio.to_thread(_gdrive_direct, fid)
+                f = await asyncio.to_thread(_http_download, job, direct, item, gate_ok, on_chunk)
+                if f.name != fname and fname:
+                    f = f.rename(f.with_name(fname))
+                if job.compress:
+                    f = await _shrink(job, f)
+                await _deliver(job, f, item, f"{root}/{rel}" if rel else root, entity, limit)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if job.state == "cancelled":
+                    raise asyncio.CancelledError()
+                failed += 1
+                print(f"[FOLDER] {fname} failed: {e}", flush=True)
+            finally:
+                shutil.rmtree(item, ignore_errors=True)
+        job.name = root + "/"
+        if failed == len(items):
+            raise RuntimeError("no file of this folder could be downloaded")
+        job.state, job.progress, job.speed = "done", 1.0, 0.0
+        if failed:
+            job.error = f"{failed} of {len(items)} file(s) were skipped (private, removed or download limit)"
+        return
+
+    tree = work / "tree"
+    if job.platform == "dropbox":
+        job.state = "downloading"
+        t0 = time.time()
+
+        def on_chunk(d: int, t: int) -> None:
+            job.progress = d / t if t else 0.0
+            job.speed = d / max(time.time() - t0, 0.1)
+        direct, _ = await asyncio.to_thread(resolve_url, job.url)
+        z = await asyncio.to_thread(_http_download, job, direct, work, gate_ok, on_chunk)
+        root = _clean_part(re.sub(r"\.zip$", "", z.name, flags=re.I))
+        job.state, job.progress, job.speed = "extracting", 0.0, 0.0
+        await _7z(job, ["x", "-y", f"-o{tree / root}", str(z)])
+        z.unlink(missing_ok=True)
+    else:  # mega: file or folder
+        job.state, job.progress, job.speed = "downloading", 0.0, 0.0
+        await _mega_download(job, job.url, tree)
+    for f in sorted(tree.rglob("*")):
+        if f.is_file():
+            rel = f.parent.relative_to(tree).as_posix()
+            loop_files.append((f, "" if rel == "." else "/".join(_clean_part(x) for x in rel.split("/"))))
+    if not loop_files:
+        raise RuntimeError("the folder is empty")
+    tops = {f.relative_to(tree).parts[0] for f, _ in loop_files}
+    job.parts = len(loop_files)
+    for i, (f, sub) in enumerate(loop_files, 1):
+        await _wait_if_paused(job, "uploading")
+        if job.compress:
+            f = await _shrink(job, f)
+        await _deliver(job, f, f.parent, sub, entity, limit)
+    job.name = (next(iter(tops)) + "/") if len(tops) == 1 and len(loop_files) > 1 else loop_files[0][0].name
+    job.state, job.progress, job.speed = "done", 1.0, 0.0
+
+
 def _ydl(opts: dict | None = None):
     try:
         import yt_dlp
     except ImportError:
         subprocess.run([os.sys.executable, "-m", "pip", "-q", "install", "yt-dlp"], check=True)
         import yt_dlp
-    return yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noprogress": True, **(opts or {})})
+    base = {"quiet": True, "no_warnings": True, "noprogress": True,
+            "http_headers": {"User-Agent": UA}, "retries": 5, "fragment_retries": 5}
+    return yt_dlp.YoutubeDL({**base, **(opts or {})})
 
 
 def _filename_from(resp, url: str) -> str:
@@ -1557,7 +1765,21 @@ async def inspect_link(body: LinkCheckIn):
     if not platform or not url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="paste a full link starting with https://")
     out = {"platform": platform, "quality": platform == "youtube", "playlist": False,
-           "title": "", "count": 1, "size": 0}
+           "title": "", "count": 1, "size": 0, "folder": False}
+    if platform == "gdrive" and is_folder_link(url, platform):
+        root, items = await asyncio.to_thread(_gdrive_tree, url)
+        out.update(title=root, folder=True, count=len(items))
+        return out
+    if platform == "mega":
+        out.update(title="MEGA folder" if is_folder_link(url, platform) else "MEGA file",
+                   folder=is_folder_link(url, platform), count=0)
+        return out
+    if platform == "dropbox" and is_folder_link(url, platform):
+        # Shared folders answer HEAD with an HTML page; the dl=1 zip is fetched later by _run_tree.
+        m = re.search(r"/(?:sh|scl/fo)/[^/]+/(?:[^/]+/)?([^/?#]+)", urllib.parse.urlparse(url).path)
+        name = urllib.parse.unquote(m.group(1)) if m and not re.fullmatch(r"[\w-]{10,}", m.group(1)) else "Dropbox folder"
+        out.update(title=_clean_part(name), folder=True, count=0)
+        return out
     if platform == "youtube":
         try:
             info = await asyncio.to_thread(
@@ -1591,6 +1813,8 @@ async def inspect_link(body: LinkCheckIn):
     if "text/html" in ctype:
         raise HTTPException(status_code=400, detail="this link opens a web page, not a file — make sure it's shared with 'anyone with the link'")
     out.update(title=name, size=size)
+    if platform == "dropbox" and is_folder_link(url, platform):
+        out.update(title=re.sub(r"\.zip$", "", name, flags=re.I), folder=True, count=0)
     return out
 
 
@@ -2010,6 +2234,9 @@ async def _run_link(job: Job) -> None:
     work.mkdir()
     try:
         job.state = "preparing"
+        if job.platform == "mega" or is_folder_link(job.url, job.platform):
+            await _run_tree(job, work, gate_ok, entity, limit)
+            return
         if job.platform == "youtube":
             folder, urls = await asyncio.to_thread(_video_items, job)
             if folder:
