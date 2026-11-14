@@ -470,6 +470,7 @@ class Job:
     compress: bool = False        # link: shrink videos with ffmpeg / other files with 7z first
     to: str = "drive"             # link: "drive" (dest folder) or "telegram" (target chat)
     bundle: bool = False          # link (playlists): pack every video into one 7z archive
+    split_mb: int = 0             # copy (compressed): 0 = one zip, else 7z volume size in MB
     parts: int = 0
     name: str = ""
     size: int = 0
@@ -2881,6 +2882,27 @@ async def _ms_link(job: Job, url: str, work: Path, entity, limit: int) -> bool:
 class CopyIn(BaseModel):
     src: str
     dest: str
+    compress: bool = False
+    split_mb: int = 0
+
+
+def _dest_free(dest: str) -> int | None:
+    """Free bytes in the destination cloud (fresh read), or None when unknown."""
+    try:
+        if is_ms(dest):
+            _MS_QUOTA["t"] = 0.0
+            q = _ms_quota()
+            return int(q["free"]) if q and q.get("free") else None
+        return shutil.disk_usage(DRIVE_ROOT).free
+    except Exception:
+        return None
+
+
+def _need_dest(dest: str, need: int, what: str) -> None:
+    free = _dest_free(dest)
+    if free is not None and need and free < need:
+        cloud = "OneDrive" if is_ms(dest) else "Google Drive"
+        raise RuntimeError(f"Not enough space in {cloud} {what}: need {need / 1024**3:.2f} GB, only {free / 1024**3:.2f} GB free")
 
 
 @app.post("/copies", dependencies=auth)
@@ -2896,8 +2918,19 @@ async def create_copy(body: CopyIn):
         name, is_dir = p.name, p.is_dir()
         sizes = [f.stat().st_size for f in _folder_files(p)] if is_dir else [p.stat().st_size]
     await asyncio.to_thread(_check_dest, body.dest)
+    if body.split_mb < 0 or (body.split_mb and body.split_mb < 50):
+        raise HTTPException(status_code=400, detail="part size must be at least 50 MB")
+    total = sum(sizes)
+    if body.compress:
+        if shutil.disk_usage(SCRATCH).free < total * (2.1 if is_ms(body.src) else 1.1):
+            raise HTTPException(status_code=400, detail=f"not enough Colab space to compress, need ~{total * 2.1 / 1e9:.1f} GB")
+        try:
+            await asyncio.to_thread(_need_dest, body.dest, total, "for this copy")
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     job = Job(id=uuid.uuid4().hex[:10], chat_id=0, message_id=0, dest=body.dest, kind="copy",
-              src=body.src, name=name + ("/" if is_dir else ""), size=sum(sizes))
+              src=body.src, name=name + ("/" if is_dir else ""), size=total,
+              compress=body.compress, split_mb=body.split_mb if body.compress else 0)
     gate = asyncio.Event()
     gate.set()
     GATES[job.id] = gate
@@ -2918,7 +2951,9 @@ async def _run_copy(job: Job) -> None:
             local = safe_path(job.src)
             if not local.exists():
                 raise RuntimeError("no longer exists in Drive")
-        if is_ms(job.dest) and not is_ms(job.src):
+        if job.compress:
+            await _copy_compressed(job, local, work)
+        elif is_ms(job.dest) and not is_ms(job.src):
             await _ms_push(job, [local])          # straight from the mounted Drive, no extra copy
         else:
             job.state, job.progress, job.speed = "copying", 0.0, 0.0
@@ -2926,6 +2961,35 @@ async def _run_copy(job: Job) -> None:
         job.state, job.progress, job.speed = "done", 1.0, 0.0
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+async def _copy_compressed(job: Job, local: Path, work: Path) -> None:
+    """Pack the source into one zip (or 7z volumes), re-check space, then drop it at the destination."""
+    size = job.size or (sum(f.stat().st_size for f in _folder_files(local)) if local.is_dir() else local.stat().st_size)
+    if shutil.disk_usage(SCRATCH).free < size * 1.1:
+        raise RuntimeError(f"not enough Colab space to compress, need ~{size * 1.1 / 1e9:.1f} GB")
+    await asyncio.to_thread(_need_dest, job.dest, size, "for this copy")
+    base = local.name if local.is_dir() else (local.stem or local.name)
+    pack = work / "pack"
+    pack.mkdir(parents=True, exist_ok=True)
+    split = job.split_mb and size > job.split_mb * MIB
+    ext = "7z" if split else "zip"
+    level = "-mx0" if (not local.is_dir() and local.name.lower().endswith(PACKED_EXT + VIDEO_EXT)) else "-mx1"
+    args = ["a", "-y", level, "-mmt=on"] + ([f"-v{job.split_mb}m"] if split else ["-tzip"])
+    args += [f"-xr!*{e}" for e in sorted(GOOGLE_DOC_EXTS)]
+    job.state, job.progress, job.speed = "compressing", 0.0, 0.0
+    await _7z(job, args + [str(pack / f"{base}.{ext}"), str(local)])
+    files = sorted(pack.glob(f"{base}.{ext}*"))
+    if not files:
+        raise RuntimeError("compressing produced nothing")
+    out = sum(f.stat().st_size for f in files)
+    await asyncio.to_thread(_need_dest, job.dest, out, "for the archive")
+    job.name = files[0].name if len(files) == 1 else f"{base}.7z ({len(files)} parts)"
+    job.size = out
+    job.state, job.progress, job.speed = "uploading", 0.0, 0.0
+    dest = _dest_dir(job)  # Drive folder, or the OneDrive staging area pushed afterwards
+    for f in files:
+        await asyncio.to_thread(move_with_progress, job, f, unique(dest / f.name))
 
 
 @app.on_event("startup")
