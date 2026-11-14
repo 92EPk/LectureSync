@@ -2810,6 +2810,7 @@ async def ms_auth_start():
 class MsConfigIn(BaseModel):
     client_id: str
     tenant: str = ""
+    personal: bool = False  # Outlook/Hotmail: no SharePoint, so no Sites.Read.All
 
 
 @app.post("/ms/configure", dependencies=auth)
@@ -2822,11 +2823,12 @@ def ms_configure(body: MsConfigIn):
     tenant = body.tenant.strip().lower() or "common"
     if not re.fullmatch(r"[a-z0-9.-]{1,100}", tenant):
         raise HTTPException(status_code=400, detail="the organization looks like university.edu or a tenant ID")
-    if cid != MS_CLIENT_ID or tenant != MS_TENANT:
+    scopes = MS_SCOPES_LIGHT if (body.personal or cid != MS_DEFAULT_CLIENT_ID) else MS_SCOPES_FULL
+    if cid != MS_CLIENT_ID or tenant != MS_TENANT or scopes != MS_SCOPES:
         MS.update(access="", refresh="", exp=0.0, user="", flow=None, roots=None, labels={})
     MS_CLIENT_ID, MS_TENANT = cid, tenant
     MS_AUTH = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
-    MS_SCOPES = MS_SCOPES_FULL if cid == MS_DEFAULT_CLIENT_ID else MS_SCOPES_LIGHT
+    MS_SCOPES = scopes
     return {"ok": True}
 
 
