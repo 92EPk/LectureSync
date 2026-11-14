@@ -238,3 +238,20 @@ together with `SHA256SUMS.txt`. The project is used by my postgraduate diploma c
 ---
 
 *A free student initiative at FGSSR, Cairo University — [cs-fgssr.pages.dev](https://cs-fgssr.pages.dev/). Licensed under [MIT](LICENSE).*
+
+## Cloud folders & extended platforms (Direct Link)
+
+The Direct Link panel imports whole cloud folders, not only single files. Everything still runs on the Colab worker — zero bytes cross the student's connection.
+
+| Source | Files | Folders | How the worker pulls it |
+|---|---|---|---|
+| Google Drive | ✓ | ✓ (recursive, 25 levels) | `embeddedfolderview` walk; Docs/Sheets/Slides exported to .docx/.xlsx/.pptx |
+| Dropbox | ✓ | ✓ (`/sh/`, `/scl/fo/`) | `dl=1` zip, extracted with 7z, tree recreated |
+| MEGA | ✓ | ✓ | `megatools` (`megadl`), auto-installed; quota errors reported clearly |
+| OneDrive / SharePoint | ✓ | ✓ when signed in | Graph share API, public download fallback |
+| MediaFire | ✓ | — | page scrape for the direct link |
+| YouTube, Facebook, X, SoundCloud, TED, Loom, Vimeo, Dailymotion | ✓ | playlists | `yt-dlp` with browser User-Agent and retries |
+
+Invariants kept: each job lives in `SCRATCH/job.id`; every remote name passes `_clean_part` (no path traversal); relative folder paths are preserved at the destination; for Telegram any file above the 2 GB cap is cut into 7z volumes and sent as ordered parts.
+
+Built by Ahmed Omran — CS Diploma, FGSSR, Cairo University.

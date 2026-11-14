@@ -265,7 +265,7 @@ function startColabExternal() {
 
 ipcMain.handle("config:get", () => {
   const c = readConfig();
-  return { url: c.url || "", apiId: c.apiId || "", hasApiHash: Boolean(c.apiHash), hasMsClientId: Boolean(c.msClientId), msClientId: c.msClientId || "", msTenant: c.msTenant || "", version: app.getVersion() };
+  return { url: c.url || "", apiId: c.apiId || "", hasApiHash: Boolean(c.apiHash), hasMsClientId: Boolean(c.msClientId), msClientId: c.msClientId || "", msTenant: c.msTenant || "", msMode: c.msMode || (c.msClientId ? "custom" : "personal"), version: app.getVersion() };
 });
 ipcMain.handle("config:telegram", (_e, { apiId, apiHash }) => {
   writeConfig({ apiId: String(apiId).trim(), ...(apiHash ? { apiHash: apiHash.trim() } : {}) });
@@ -284,20 +284,35 @@ ipcMain.handle("telegram:configure", () => {
   if (!apiId || !apiHash) throw new Error("Add your Telegram API ID and API Hash in Settings first");
   return call("POST", "/telegram/configure", { api_id: Number(apiId), api_hash: apiHash });
 });
-ipcMain.handle("config:microsoft", (_e, clientId, tenant) => writeConfig({ msClientId: String(clientId || "").trim(), msTenant: String(tenant || "").trim() }));
+ipcMain.handle("config:microsoft", (_e, clientId, tenant, mode) => writeConfig({ msClientId: String(clientId || "").trim(), msTenant: String(tenant || "").trim(),
+  msMode: mode === "custom" ? "custom" : "personal", msRefresh: "", msUser: "" }));
+// Personal mode ignores the saved custom app (kept for later) and uses the built-in one on "common".
+const msApp = () => {
+  const c = readConfig();
+  const custom = (c.msMode || (c.msClientId ? "custom" : "personal")) === "custom" && c.msClientId;
+  return custom ? { id: c.msClientId, tenant: c.msTenant || "common", custom: true } : { id: MS_PERSONAL_BROWSER_ID, tenant: "consumers", custom: false };
+};
 // Built-in public Microsoft app ID; sent whenever the user has no custom one,
 // so sign-in works even if the Colab engine is an older build without it.
 const MS_DEFAULT_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c";
+// Public first-party client (Azure CLI) that accepts personal accounts with a http://localhost
+// redirect in the browser — no Azure Portal app needed. Used for the personal browser sign-in.
+// Public multi-tenant third-party app shared by rclone users (personal accounts can consent).
+// It is registered as a web app on http://localhost:53682/, so the secret and that exact port are required.
+const MS_PERSONAL_BROWSER_ID = "b15665d9-eda6-4092-8539-0eec376afd59";
+const MS_PERSONAL_SECRET = "qtyfaBBYA403=unZUP40~_#";
+const MS_PERSONAL_PORT = 53682;
+const msSecret = () => (msApp().custom ? {} : { client_secret: MS_PERSONAL_SECRET });
 ipcMain.handle("microsoft:configure", () => {
-  const { msClientId, msTenant } = readConfig();
-  return call("POST", "/ms/configure", { client_id: msClientId || MS_DEFAULT_CLIENT_ID, tenant: msClientId ? msTenant || "" : "" });
+  const a = msApp();
+  return call("POST", "/ms/configure", { client_id: a.custom ? a.id : MS_DEFAULT_CLIENT_ID, tenant: a.tenant, personal: !a.custom });
 });
 // ---- Microsoft sign-in in the PC's own browser (PKCE + localhost redirect).
 // University rules (error 53003) block sign-ins that start from Colab's US datacenter;
 // signing in here uses the user's own IP and device, then only the token goes to Colab.
 const MS_LIGHT_SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const b64url = (b) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const msAuthority = () => `https://login.microsoftonline.com/${readConfig().msTenant || "organizations"}/oauth2/v2.0`;
+const msAuthority = () => `https://login.microsoftonline.com/${msApp().tenant}/oauth2/v2.0`;
 
 function postForm(url, data) {
   const body = new URLSearchParams(data).toString();
@@ -328,8 +343,7 @@ async function msHandOver(r) {
 }
 
 ipcMain.handle("microsoft:browser-login", async () => {
-  const { msClientId } = readConfig();
-  if (!msClientId) throw new Error("Add your Microsoft app ID in Settings first");
+  const msClientId = msApp().id;
   const verifier = b64url(crypto.randomBytes(32));
   const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
   const state = b64url(crypto.randomBytes(16));
@@ -341,29 +355,31 @@ ipcMain.handle("microsoft:browser-login", async () => {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(`<body style="font-family:system-ui;background:#0c0d0e;color:#eee;display:grid;place-items:center;height:100vh"><h2>${ok ? "Signed in — you can close this tab and go back to LectureSync." : "Sign-in failed — go back to LectureSync and try again."}</h2></body>`);
       clearTimeout(timer); srv.close();
-      if (ok) resolve({ code: u.searchParams.get("code"), redirect: `http://localhost:${srv.address()?.port || port}` });
+      if (ok) resolve({ code: u.searchParams.get("code"), redirect: redirectUri(srv.address()?.port || port) });
       else reject(new Error((u.searchParams.get("error_description") || u.searchParams.get("error") || "sign-in cancelled").split("\r\n")[0]));
     });
     let port = 0;
     const timer = setTimeout(() => { srv.close(); reject(new Error("Sign-in timed out — try again")); }, 5 * 60 * 1000);
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
+    const redirectUri = (p) => (msApp().custom ? `http://localhost:${p}` : `http://localhost:${p}/`);
+    srv.on("error", (e) => reject(e.code === "EADDRINUSE" ? new Error("Port 53682 is busy (close rclone or other sign-in windows) and try again") : e));
+    srv.listen(msApp().custom ? 0 : MS_PERSONAL_PORT, "127.0.0.1", () => {
       port = srv.address().port;
-      const q = new URLSearchParams({ client_id: msClientId, response_type: "code", redirect_uri: `http://localhost:${port}`,
+      const q = new URLSearchParams({ client_id: msClientId, response_type: "code", redirect_uri: redirectUri(port),
         response_mode: "query", scope: MS_LIGHT_SCOPES, state, code_challenge: challenge, code_challenge_method: "S256", prompt: "select_account" });
       shell.openExternal(`${msAuthority()}/authorize?${q}`);
     });
   });
-  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, grant_type: "authorization_code", code,
+  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, ...msSecret(), grant_type: "authorization_code", code,
     redirect_uri: redirect, code_verifier: verifier, scope: MS_LIGHT_SCOPES });
   return msHandOver(r);
 });
 
 // Refresh on the PC and hand the fresh token to Colab (Colab never refreshes it itself).
 ipcMain.handle("microsoft:push", async () => {
-  const { msClientId, msRefresh } = readConfig();
-  if (!msClientId || !msRefresh) return { ok: false };
-  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, grant_type: "refresh_token",
+  const { msRefresh } = readConfig();
+  const msClientId = msApp().id;
+  if (!msRefresh) return { ok: false };
+  const r = await postForm(`${msAuthority()}/token`, { client_id: msClientId, ...msSecret(), grant_type: "refresh_token",
     refresh_token: msRefresh, scope: MS_LIGHT_SCOPES });
   if (!r.access_token) { writeConfig({ msRefresh: "" }); return { ok: false }; }
   return msHandOver(r);
@@ -377,10 +393,21 @@ ipcMain.handle("colab:external", () => startColabExternal());
 ipcMain.handle("colab:copy", () => clipboard.writeText(buildCell(getToken())));
 // Smart paste for the "From link" tab: plain text only, nothing is written.
 ipcMain.handle("clipboard:read", () => (clipboard.readText() || "").slice(0, 2048));
-ipcMain.handle("open", (_e, url) => {
-  // Only the handful of links the UI actually shows.
-  if (/^https:\/\/(my\.telegram\.org|github\.com\/92EPK|drive\.google\.com|microsoft\.com\/devicelogin|login\.microsoft\.com\/device|entra\.microsoft\.com|cs-fgssr\.pages\.dev)/i.test(url)) shell.openExternal(url);
-  else if (url.startsWith("mailto:B9x@outlook.com")) shell.openExternal(url);
+ipcMain.handle("open", async (_e, value) => {
+  let url;
+  try { url = new URL(String(value)); } catch { throw new Error("This link is not valid"); }
+  if (url.protocol !== "https:" || url.username || url.password) throw new Error("This link is not allowed");
+  const host = url.hostname.toLowerCase();
+  const pathname = url.pathname.replace(/\/+$/, "") || "/";
+  const microsoftVerify = ["microsoft.com", "www.microsoft.com"].includes(host)
+    && ["/link", "/devicelogin"].includes(pathname);
+  const microsoftDevice = ["login.microsoft.com", "login.microsoftonline.com"].includes(host)
+    && /^\/(?:device|deviceauth|common\/oauth2\/deviceauth)$/i.test(pathname);
+  const existingAppLink = /^(?:my\.telegram\.org|github\.com|drive\.google\.com|entra\.microsoft\.com|cs-fgssr\.pages\.dev)$/i.test(host)
+    && (host !== "github.com" || pathname.toLowerCase().startsWith("/92epk"));
+  const mailLink = String(value).startsWith("mailto:B9x@outlook.com");
+  if (microsoftVerify || microsoftDevice || existingAppLink || mailLink) return shell.openExternal(String(value));
+  throw new Error("This link is not allowed");
 });
 ipcMain.handle("notify", (_e, title, body) => new Notification({ title, body }).show());
 // Stop the computer from sleeping while transfers run; released as soon as the queue is idle.

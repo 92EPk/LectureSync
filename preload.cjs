@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld("ls", {
   setUrl: (url) => ipcRenderer.invoke("config:url", url),
   disconnect: () => ipcRenderer.invoke("config:disconnect"),
   configureTelegram: () => ipcRenderer.invoke("telegram:configure"),
-  saveMicrosoft: (clientId, tenant) => ipcRenderer.invoke("config:microsoft", clientId, tenant),
+  saveMicrosoft: (clientId, tenant, mode) => ipcRenderer.invoke("config:microsoft", clientId, tenant, mode),
   configureMicrosoft: () => ipcRenderer.invoke("microsoft:configure"),
   msBrowserLogin: () => ipcRenderer.invoke("microsoft:browser-login"),
   msPush: () => ipcRenderer.invoke("microsoft:push"),

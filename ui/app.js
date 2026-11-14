@@ -111,8 +111,10 @@ function toast(text, isError = false) {
   const t = $("toast");
   t.textContent = text;
   t.className = "toast" + (isError ? " error" : "");
+  // Popover puts the toast in the top layer, above open dialogs and their backdrop.
+  try { if (t.showPopover) { if (t.matches(":popover-open")) t.hidePopover(); t.showPopover(); } } catch {}
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add("hidden"), 4500);
+  toastTimer = setTimeout(() => { t.classList.add("hidden"); try { t.hidePopover?.(); } catch {} }, 4500);
 }
 
 function ask(text, value = "") {
@@ -209,11 +211,14 @@ async function refreshStatus() {
     $("accTg").classList.toggle("ok", signedIn);
     $("accTg").textContent = signedIn ? "Telegram" : "Telegram · sign in";
     $("accG").classList.toggle("ok", Boolean(d.drive));
-    $("accG").textContent = d.drive ? "Google Drive" : "Drive · not mounted";
-    $("diskText").textContent = `Colab ${fmtSize(d.free)} free` +
-      (d.drive ? ` · Drive · ${fmtSize(d.drive.free)} free` : "") +
-      (d.onedrive ? ` · OneDrive · ${fmtSize(d.onedrive.free)} free` : "");
-    $("diskFill").style.width = `${Math.round((d.used / d.total) * 100)}%`;
+    $("accG").textContent = d.drive ? "Google Drive" : "Google Drive · not mounted";
+    const pct = (q) => q && q.total ? Math.min(100, Math.round((q.used / q.total) * 100)) : 0;
+    $("diskText").textContent = `Colab ${fmtSize(d.free)} free`;
+    $("diskFill").style.width = `${pct(d)}%`;
+    $("dkDrive").classList.toggle("hidden", !d.drive);
+    if (d.drive) { $("driveText").textContent = `Google Drive ${fmtSize(d.drive.free)} free`; $("driveFill").style.width = `${pct(d.drive)}%`; }
+    $("dkMs").classList.toggle("hidden", !d.onedrive);
+    if (d.onedrive) { $("msText").textContent = `OneDrive ${fmtSize(d.onedrive.free)} free`; $("msFill").style.width = `${pct(d.onedrive)}%`; }
     return h;
   } catch {
     // Tolerate brief tunnel hiccups: only drop after 3 failures in a row.
@@ -474,8 +479,12 @@ function showProvider(ms) {
 
 async function msStatus() { return api("GET", "/ms/status"); }
 
+// Remembered Microsoft sign-in state: skips a status round-trip on every tab click.
+// The worker still answers 428 if the session is gone, which resets this and asks to sign in again.
+let msConnected = false;
 async function msRefreshBadge() {
   const s = await msStatus().catch(() => null);
+  if (s) msConnected = Boolean(s.connected);
   const b = $("msAccount");
   b.classList.toggle("hidden", !(s && s.connected) || !isMs(cwd));
   if (s && s.connected) { b.textContent = "Sign out"; b.title = (s.user || "Microsoft") + " · Sign out"; }
@@ -487,52 +496,87 @@ async function msRefreshBadge() {
 }
 
 async function msConnect() {
+  if (msConnected) return true;
   await ls.configureMicrosoft?.().catch(() => null);
   let s = await msStatus();
-  if (s.connected) return true;
+  if (s.connected) { msConnected = true; return true; }
   const cfg = await ls.getConfig();
-  if (cfg.msClientId && ls.msBrowserLogin) {
-    // Own app ID: sign in from this PC's browser so university rules see the user's own IP/device.
-    if ((await ls.msPush().catch(() => null))?.ok) return true;
+  if (ls.msBrowserLogin) {
+    // Custom app only (needs http://localhost registered as a redirect URI). Sign in from this PC's own browser: Microsoft sees the user's own IP/device (no "United States" warning),
+    // and personal Outlook accounts work. Falls back to the device code only if the browser sign-in fails.
+    if ((await ls.msPush().catch(() => null))?.ok) { msConnected = true; return true; }
     toast("Finish signing in to Microsoft in your browser…");
     const r = await ls.msBrowserLogin().catch((e) => { toast(cleanError(e), true); return null; });
-    if (!r) return false;
-    toast(`Connected to Microsoft${r.user ? " as " + r.user : ""}.`);
-    return true;
+    if (r) {
+      msConnected = true;
+      toast(`Connected to Microsoft${r.user ? " as " + r.user : ""}.`);
+      return true;
+    }
+    if (cfg.msMode === "custom" && cfg.msClientId) return false;
   }
   const r = await api("POST", "/ms/auth/start");
   $("msCode").textContent = r.user_code;
   $("msState").textContent = "Waiting for you to sign in…";
-  $("msOpen").onclick = () => ls.open(r.verification_uri);
+  $("msOpen").onclick = () => guard(() => ls.open(r.verification_uri));
   $("msCopy").onclick = () => { navigator.clipboard.writeText(r.user_code); toast("Code copied."); };
   const d = $("msDlg");
   d.showModal();
-  ls.open(r.verification_uri);
+  await ls.open(r.verification_uri).catch((e) => toast(cleanError(e), true));
   const until = Date.now() + r.expires_in * 1000;
   while (d.open && Date.now() < until) {
     await new Promise((ok) => setTimeout(ok, 3000));
     s = await msStatus().catch(() => s);
-    if (s.connected) { d.close(); toast(`Connected to Microsoft${s.user ? " as " + s.user : ""}.`); return true; }
+    if (s.connected) { msConnected = true; d.close(); toast(`Connected to Microsoft${s.user ? " as " + s.user : ""}.`); return true; }
     if (s.flow && s.flow.state === "error") { $("msState").textContent = "Sign-in failed: " + s.flow.error; return false; }
   }
   if (d.open) $("msState").textContent = "The code expired. Close and try again.";
   return false;
 }
 
+const driveCache = new Map(); // folder path -> last listing, shown instantly while a fresh one loads
+let driveSeq = 0;              // only the newest request may draw the list (fast tab clicks)
+const isMsAuthErr = (e) => /not connected|sign-in expired|sign in again/i.test(cleanError(e));
+
 async function switchProvider(ms) {
   if (ms === isMs(cwd)) return;
-  if (ms && !(await msConnect())) return;
-  await loadDrive(ms ? lastIn.ms : lastIn.g);
+  const prev = isMs(cwd);
+  const target = ms ? lastIn.ms : lastIn.g;
+  showProvider(ms); // tab lights up immediately
+  if (ms && !(await msConnect())) { showProvider(prev); return; }
+  const cached = driveCache.get(target || (ms ? "ms:" : ""));
+  if (cached) renderDrive(cached);
+  try {
+    await loadDrive(target);
+  } catch (e) {
+    if (ms && isMsAuthErr(e)) {
+      msConnected = false;
+      if (await msConnect()) return loadDrive(target);
+    }
+    if (!cached) showProvider(prev);
+    throw e;
+  }
 }
 
 async function loadDrive(path = cwd) {
+  const my = ++driveSeq;
   let res;
   try {
     res = await api("GET", `/drive/list?path=${encodeURIComponent(path)}`);
   } catch (e) {
-    if (!path) throw e;
+    if (my !== driveSeq) return;
+    if (isMs(path) && isMsAuthErr(e)) msConnected = false;
+    if (!path || isMsAuthErr(e)) throw e;
     res = await api("GET", "/drive/list?path="); // remembered folder no longer exists
   }
+  if (my !== driveSeq) return; // a newer click already took over
+  driveCache.set(path || "", res);
+  driveCache.set(res.path, res);
+  renderDrive(res);
+}
+
+function renderDrive(res) {
+  const samePlace = res.path === cwd;
+  const keep = samePlace ? new Map(driveSel) : new Map();
   cwd = res.path;
   msLabel = res.label || "";
   const ms = isMs(cwd);
@@ -564,11 +608,11 @@ async function loadDrive(path = cwd) {
     const del = el("button", { className: "ghost small danger", textContent: "Delete" });
     del.onclick = () => guard(async () => {
       // Typing the name back is deliberate friction; a misclick here can wipe a whole course folder.
-      const typed = await ask(`Type "${it.name}" to delete it${it.dir ? " and everything inside" : ""}. It goes to the ${isMs(cwd) ? "recycle bin" : "Drive trash"}.`, "");
+      const typed = await ask(`Type "${it.name}" to delete it${it.dir ? " and everything inside" : ""}. It goes to the ${isMs(cwd) ? "recycle bin" : "Google Drive trash"}.`, "");
       if (typed === null) return;
       if (typed !== it.name) return toast("Name didn't match, nothing was deleted.", true);
       await api("POST", "/drive/delete", { path: full });
-      toast(isMs(cwd) ? "Moved to the recycle bin." : "Moved to Drive trash.");
+      toast(isMs(cwd) ? "Moved to the recycle bin." : "Moved to Google Drive trash.");
       loadDrive();
     });
 
@@ -580,6 +624,7 @@ async function loadDrive(path = cwd) {
       it.dir ? "" : kindBadge(it.name),
       el("span", { className: "meta", textContent: it.dir ? "folder" : fmtSize(it.size) }),
       el("span", { className: "actions" }, ren, del));
+    if (keep.has(full)) { pick.checked = true; driveSel.set(full, it); li.classList.add("picked"); }
     pick.onchange = () => {
       pick.checked ? driveSel.set(full, it) : driveSel.delete(full);
       li.classList.toggle("picked", pick.checked);
@@ -589,6 +634,7 @@ async function loadDrive(path = cwd) {
   }));
   renderDriveSel();
   filterList("driveList", $("driveSearch").value);
+  if (mode === "c2c" && (c2cPath === null || isMs(c2cPath) !== (c2cDst() === "ms"))) loadC2cDest().catch(() => {});
 }
 
 // ------------------------------------------------ direction mode + drive selection
@@ -609,62 +655,161 @@ function renderDriveSel() {
     : mode === "drive2tg" ? "Tick files or folders to send" : mode === "c2c" ? "Tick files or folders to copy" : "Tick files or folders";
   $("driveSelSend").disabled = !on;
   $("driveSelClear").disabled = !driveSel.size;
+  $("driveSelDel").classList.toggle("hidden", !driveSel.size);
+  $("driveSelDel").lastChild.textContent = driveSel.size ? ` Delete ${driveSel.size}` : " Delete";
   renderC2c();
 }
 
 // ------------------------------------------------ cloud -> cloud
-var c2cPicking = null; // source cloud ("g"/"ms") while the user browses for a destination
-const cloudLabel = (k) => (k === "ms" ? "OneDrive" : "Google Drive");
+// Left pane = source cloud (the normal Drive browser). Right pane = the other cloud, browsed independently.
+var cloudLabel = (k) => (k === "ms" ? "OneDrive" : "Google Drive");
+var c2cDst = () => (isMs(cwd) ? "g" : "ms");
+var c2cPath = null, c2cLabel = "", c2cSeq = 0;
+function c2cParent(p) {
+  if (isMs(p)) { const r = p.slice(3); return r.includes("/") ? "ms:" + r.slice(0, r.lastIndexOf("/")) : "ms:"; }
+  return p && p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+}
+async function loadC2cDest(path) {
+  if (mode !== "c2c") return;
+  const dst = c2cDst();
+  if (path === undefined) path = lastIn[dst];
+  const my = ++c2cSeq;
+  $("c2cTo").textContent = cloudLabel(dst);
+  if (dst === "ms" && !msConnected) await msStatus().then((s) => { msConnected = Boolean(s && s.connected); }).catch(() => {});
+  if (my !== c2cSeq) return;
+  const needConnect = dst === "ms" && !msConnected;
+  $("c2cConnectRow").classList.toggle("hidden", !needConnect);
+  if (needConnect) { c2cPath = null; $("c2cList").replaceChildren(); $("c2cCrumb").replaceChildren(); $("c2cEmpty").classList.add("hidden"); return renderC2c(); }
+  let res;
+  try { res = await api("GET", `/drive/list?path=${encodeURIComponent(path)}`); }
+  catch (e) { if (my !== c2cSeq) return; res = await api("GET", `/drive/list?path=${dst === "ms" ? "ms%3A" : ""}`); }
+  if (my !== c2cSeq) return;
+  c2cPath = res.path; c2cLabel = res.label || "";
+  lastIn[dst] = c2cPath;
+  localStorage.setItem(dst === "ms" ? "ls-last-ms" : "ls-last-g", c2cPath);
+  const parts = [];
+  if (isMs(c2cPath)) {
+    const [drive, ...rest] = c2cPath.slice(3).split("/").filter((x, i) => i === 0 || x);
+    parts.push(["Microsoft", "ms:"]);
+    if (drive) { parts.push([c2cLabel || "Library", `ms:${drive}`]); rest.forEach((x, i) => parts.push([x, `ms:${drive}/` + rest.slice(0, i + 1).join("/")])); }
+  } else {
+    parts.push(["My Drive", ""]);
+    const rest = c2cPath ? c2cPath.split("/") : [];
+    rest.forEach((x, i) => parts.push([x, rest.slice(0, i + 1).join("/")]));
+  }
+  const nodes = [];
+  parts.forEach(([t, target], i) => { if (i) nodes.push(el("span", { textContent: "›" })); nodes.push(el("button", { textContent: t, onclick: () => guard(() => loadC2cDest(target)) })); });
+  $("c2cCrumb").replaceChildren(...nodes);
+  const items = [...res.items].sort((a, b) => (b.dir ? 1 : 0) - (a.dir ? 1 : 0));
+  $("c2cEmpty").classList.toggle("hidden", items.length > 0);
+  c2cSel.clear();
+  $("c2cList").replaceChildren(...items.map((it) => {
+    const full = it.path || (c2cPath && c2cPath !== "ms:" ? `${c2cPath}/${it.name}` : it.name);
+    const name = el("span", { className: "name", textContent: it.name, title: it.name });
+    const pick = el("input", { type: "checkbox", className: "pick", title: "Select" });
+    const ren = el("button", { className: "ghost small", textContent: "Rename" });
+    const del = el("button", { className: "ghost small danger", textContent: "Delete" });
+    if (it.library) { pick.disabled = ren.disabled = del.disabled = true; }
+    for (const b of [pick, ren, del]) b.addEventListener("click", (e) => e.stopPropagation());
+    ren.onclick = () => guard(async () => {
+      const nn = await ask("New name:", it.name);
+      if (nn && nn.trim() && nn !== it.name) { await api("POST", "/drive/rename", { path: full, new_name: nn.trim() }); await loadC2cDest(c2cPath); }
+    });
+    del.onclick = () => guard(async () => {
+      const typed = await ask(`Type "${it.name}" to delete it${it.dir ? " and everything inside" : ""}. It goes to the ${isMs(full) ? "recycle bin" : "Google Drive trash"}.`, "");
+      if (typed === null) return;
+      if (typed !== it.name) return toast("Name didn't match, nothing was deleted.", true);
+      await api("POST", "/drive/delete", { path: full });
+      toast(isMs(full) ? "Moved to the recycle bin." : "Moved to Google Drive trash.");
+      await loadC2cDest(c2cPath);
+    });
+    const li = el("li", { className: it.dir ? "dir" : "kind-" + fileKind(it.name) },
+      pick, icon(it.dir ? "folder" : fileIcon(it.name)), name, it.dir ? "" : kindBadge(it.name),
+      el("span", { className: "meta", textContent: it.dir ? "folder" : fmtSize(it.size) }),
+      el("span", { className: "actions" }, ren, del));
+    pick.onchange = () => { pick.checked ? c2cSel.set(full, it) : c2cSel.delete(full); li.classList.toggle("picked", pick.checked); renderC2cSel(); };
+    if (it.dir) li.onclick = () => guard(() => loadC2cDest(full));
+    return li;
+  }));
+  renderC2cSel();
+  renderC2c();
+}
 function renderC2c() {
   if (!$("c2cBody")) return;
-  const src = c2cPicking || (isMs(cwd) ? "ms" : "g");
-  const dst = src === "ms" ? "g" : "ms";
-  for (const b of document.querySelectorAll("[data-c2c]")) b.classList.toggle("on", b.dataset.c2c === src);
-  const picking = Boolean(c2cPicking);
-  $("c2cPicking").classList.toggle("hidden", !picking);
-  $("c2cFrom").textContent = cloudLabel(src);
-  const destPath = picking ? cwd : lastIn[dst];
-  $("c2cTo").textContent = destPath && destPath !== "ms:" ? placeName(destPath, picking ? msLabel : "") : cloudLabel(dst) + " · no folder yet";
-  const items = picking ? [] : [...driveSel.values()];
+  const dst = c2cDst();
+  const ok = c2cPath !== null && c2cPath !== "ms:" && isMs(c2cPath) === (dst === "ms");
+  const items = [...driveSel.values()];
   const total = items.filter((f) => !f.dir).reduce((a, f) => a + (f.size || 0), 0);
-  $("c2cWhat").textContent = picking ? "" : (items.length ? `${placeName(cwd, msLabel)} · ${items.length} item${items.length > 1 ? "s" : ""}${total ? " · " + fmtSize(total) : ""}` : placeName(cwd, msLabel));
-  $("c2cHint").textContent = picking ? "" : items.length ? "" : "Tick files or folders on the right.";
+  $("c2cWhat").textContent = !ok ? (dst === "ms" ? "Open a OneDrive / SharePoint folder" : "Open a folder")
+    : items.length ? `${items.length} item${items.length > 1 ? "s" : ""}${total ? " · " + fmtSize(total) : ""} → ${placeName(c2cPath, c2cLabel)}`
+    : `Into ${placeName(c2cPath, c2cLabel)} · tick files on the left`;
   const btn = $("c2cStart");
-  btn.disabled = picking || !items.length;
-  btn.lastChild.textContent = items.length ? ` Copy ${items.length} to ${cloudLabel(dst)}` : ` Copy to ${cloudLabel(dst)}`;
-  $("c2cPick").disabled = picking;
-  $("c2cSwap").disabled = picking;
+  btn.disabled = !ok || !items.length;
+  btn.lastChild.textContent = items.length ? ` Copy ${items.length}` : " Copy";
+  if ($("c2cCompress")) renderC2cCompress();
+  $("c2cUp").disabled = c2cPath === null || (isMs(c2cPath) ? c2cPath === "ms:" : !c2cPath);
 }
-async function c2cSetSource(src) {
-  if (c2cPicking) return;
-  await switchProvider(src === "ms");
+var c2cSel = new Map(); // destination path -> item
+function renderC2cSel() {
+  const n = c2cSel.size;
+  $("c2cSelCount").textContent = n ? `${n} selected in destination` : "Manage this folder";
+  $("c2cSelClear").disabled = !n;
+  $("c2cSelDel").classList.toggle("hidden", !n);
 }
-for (const b of document.querySelectorAll("[data-c2c]")) b.onclick = () => guard(() => c2cSetSource(b.dataset.c2c));
-$("c2cSwap").onclick = () => guard(() => c2cSetSource(isMs(cwd) ? "g" : "ms"));
-$("c2cPick").onclick = () => guard(async () => {
-  const src = isMs(cwd) ? "ms" : "g";
-  const toMs = src === "g";
-  if (toMs && !(await msConnect())) return;
-  c2cPicking = src;
-  await loadDrive(toMs ? lastIn.ms : lastIn.g);
-  renderC2c();
+$("c2cSelAll").onclick = () => { for (const b of $("c2cList").querySelectorAll("input.pick:not(:disabled)")) if (!b.checked) { b.checked = true; b.onchange(); } };
+$("c2cSelClear").onclick = () => { for (const b of $("c2cList").querySelectorAll("input.pick:checked")) { b.checked = false; b.onchange(); } };
+$("c2cSelDel").onclick = () => guard(async () => {
+  const items = [...c2cSel.entries()];
+  if (!items.length) return;
+  const bin = isMs(c2cPath) ? "recycle bin" : "Google Drive trash";
+  const word = `delete ${items.length}`;
+  const typed = await ask(`Type "${word}" to delete ${items.length} selected item${items.length > 1 ? "s" : ""} from the destination. They go to the ${bin}.`, "");
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== word) return toast("Text didn't match, nothing was deleted.", true);
+  let failed = 0;
+  for (const [p] of items) { try { await api("POST", "/drive/delete", { path: p }); } catch { failed++; } }
+  toast(failed ? `${items.length - failed} deleted, ${failed} failed.` : `Moved ${items.length} item${items.length > 1 ? "s" : ""} to the ${bin}.`, Boolean(failed));
+  await loadC2cDest(c2cPath);
 });
-$("c2cPickCancel").onclick = () => guard(async () => { const src = c2cPicking; c2cPicking = null; await loadDrive(lastIn[src]); });
-$("c2cPickDone").onclick = () => guard(async () => {
-  if (cwd === "ms:") return toast("Open a OneDrive / SharePoint folder first.", true);
-  const src = c2cPicking; c2cPicking = null;
-  toast(`Destination set: ${placeName(cwd, msLabel)}`);
-  await loadDrive(lastIn[src]);
+$("c2cMkdir").onclick = () => guard(async () => {
+  if (c2cPath === null || c2cPath === "ms:") return toast("Open a destination folder first.", true);
+  const n = await ask("New folder name:", "");
+  if (!n || !n.trim()) return;
+  await api("POST", "/drive/mkdir", { path: isMs(c2cPath) ? `${c2cPath}/${n.trim()}` : (c2cPath ? `${c2cPath}/${n.trim()}` : n.trim()) });
+  await loadC2cDest(c2cPath);
 });
+var c2cSplitMb = Number(localStorage.getItem("ls-c2c-split") || 0);
+$("c2cCompress").checked = localStorage.getItem("ls-c2c-compress") === "1";
+function renderC2cCompress() {
+  const on = $("c2cCompress").checked;
+  $("c2cSplitRow").classList.toggle("hidden", !on);
+  for (const b of $("c2cSplit").querySelectorAll(".seg-btn")) b.classList.toggle("on", Number(b.dataset.mb) === c2cSplitMb);
+  const btn = $("c2cStart"), n = driveSel.size;
+  if (n) btn.lastChild.textContent = on ? ` Compress & copy ${n}` : ` Copy ${n}`;
+}
+$("c2cCompress").onchange = () => { localStorage.setItem("ls-c2c-compress", $("c2cCompress").checked ? "1" : "0"); renderC2cCompress(); };
+$("c2cSplit").onclick = (e) => {
+  const b = e.target.closest(".seg-btn"); if (!b) return;
+  c2cSplitMb = Number(b.dataset.mb); localStorage.setItem("ls-c2c-split", String(c2cSplitMb)); renderC2cCompress();
+};
+renderC2cCompress();
+$("c2cUp").onclick = () => guard(() => loadC2cDest(c2cParent(c2cPath)));
+$("c2cRefresh").onclick = () => guard(() => loadC2cDest(c2cPath ?? undefined));
+$("c2cConnect").onclick = () => guard(async () => { if (await msConnect()) await loadC2cDest(); });
+$("c2cSwap").onclick = () => guard(async () => { c2cPath = null; await switchProvider(!isMs(cwd)); await loadC2cDest(); });
 $("c2cStart").onclick = () => guard(async () => {
   const items = [...driveSel.values()];
   if (!items.length) return toast("Tick files or folders first.", true);
-  const toMs = !isMs(cwd);
-  if (toMs && !(await msConnect())) return;
-  const dest = toMs ? lastIn.ms : lastIn.g;
-  if (!dest || dest === "ms:") { toast("Choose a destination folder first."); return $("c2cPick").click(); }
-  for (const it of items) await api("POST", "/copies", { src: it.full, dest });
-  toast(`Added ${items.length} copy job${items.length > 1 ? "s" : ""} → ${placeName(dest)}`);
+  const dest = c2cPath;
+  if (dest === null || dest === "ms:") return toast("Open a destination folder first.", true);
+  const compress = $("c2cCompress").checked;
+  const split_mb = compress ? c2cSplitMb : 0;
+  if (compress && split_mb) {
+    const total = items.filter((f) => !f.dir).reduce((x, f) => x + (f.size || 0), 0);
+    if (total / (split_mb * 1024 * 1024) > 50) return toast("That would make more than 50 parts. Pick a bigger part size.", true);
+  }
+  for (const it of items) await api("POST", "/copies", { src: it.full, dest, compress, split_mb });
+  toast(`Added ${items.length} copy job${items.length > 1 ? "s" : ""} → ${placeName(dest, c2cLabel)}`);
   loadDrive();
   loadJobs();
 });
@@ -674,10 +819,9 @@ function setMode(m) {
   localStorage.setItem("ls-mode", m);
   document.body.classList.toggle("d2t", m === "drive2tg");
   document.body.classList.toggle("c2c", m === "c2c");
-  if (m !== "c2c" && c2cPicking) { const src = c2cPicking; c2cPicking = null; loadDrive(lastIn[src]).catch(() => {}); }
-  // Source pane always on the left: Drive first when sending Drive -> Telegram.
+  // Source pane always on the left: Drive first when sending Drive -> Telegram or cloud -> cloud.
   const ws = $("workspace"), tg = $("tgPane"), dr = $("drivePane"), sp0 = ws.querySelector('[data-split="0"]');
-  const [first, second] = m === "drive2tg" ? [dr, tg] : [tg, dr];
+  const [first, second] = m === "drive2tg" || m === "c2c" ? [dr, tg] : [tg, dr];
   ws.insertBefore(first, ws.firstChild);
   ws.insertBefore(sp0, first.nextSibling);
   ws.insertBefore(second, sp0.nextSibling);
@@ -690,11 +834,11 @@ function setMode(m) {
   $("driveHint").textContent = m === "drive2tg"
     ? "Tick files or folders, then press Send to Telegram."
     : m === "link" ? "Files from links go into the folder you're looking at."
-    : m === "c2c" ? "Tick what to copy, then press Copy on the left."
+    : m === "c2c" ? "Tick what to copy, then press Copy on the right."
     : "Files from Telegram go into the folder you're looking at.";
   linkDriveNote();
   renderDriveSel();
-  if (m === "link" && !$("linkUrl").value.trim()) pasteLink(true).catch(() => {});
+  if (m === "c2c") loadC2cDest().catch(() => {});
 }
 
 // ------------------------------------------------ drive -> telegram
@@ -736,7 +880,24 @@ function setupTargetCombo(targets, ids = ["tgTargetSearch", "tgTargetList", "tgT
     if (!items.length) list.replaceChildren(el("li", { className: "group-h", textContent: "No match — type a full @username" }));
     highlight();
     list.classList.remove("hidden");
+    place();
   };
+  // Outside dialogs the list floats (fixed) so it never stretches the pane and adds a second scrollbar.
+  const floating = !input.closest("dialog");
+  const place = () => {
+    if (!floating) return;
+    const r = input.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
+    const up = below < 180 && above > below;
+    const h = Math.max(120, Math.min(260, up ? above : below));
+    Object.assign(list.style, { position: "fixed", left: r.left + "px", width: r.width + "px", right: "auto", maxHeight: h + "px",
+      top: up ? "auto" : r.bottom + 4 + "px", bottom: up ? window.innerHeight - r.top + 4 + "px" : "auto" });
+  };
+  if (floating) {
+    const reflow = () => { if (!list.classList.contains("hidden")) place(); };
+    window.addEventListener("resize", reflow);
+    document.addEventListener("scroll", (e) => { if (!list.contains(e.target)) reflow(); }, true);
+  }
   const highlight = () => rows.forEach((r, i) => r._li.classList.toggle("active", i === active));
   const pick = (it) => {
     chosen = it; err.classList.add("hidden");
@@ -859,7 +1020,7 @@ function filterList(id, text) {
 
 const PLATFORM_NAME = {
   sharepoint: "SharePoint / OneDrive", gdrive: "Google Drive", dropbox: "Dropbox",
-  mediafire: "MediaFire", youtube: "YouTube / video site", direct: "Direct link",
+  mediafire: "MediaFire", mega: "MEGA", youtube: "Video site", direct: "Direct link",
 };
 let linkChecked = null, linkCombo = null;
 
@@ -894,7 +1055,9 @@ async function checkLink() {
     }
     const r = await api("POST", "/links/inspect", { url });
     linkChecked = { url, ...r };
-    const what = r.playlist ? `Playlist "${r.title}" — ${r.count} videos` : (r.title || "File") + (r.size ? ` · ${fmtSize(r.size)}` : "");
+    const what = r.folder
+      ? `📁 Whole folder "${r.title}"${r.count ? ` — ${r.count} files` : ""} · sub-folders kept`
+      : r.playlist ? `Playlist "${r.title}" — ${r.count} videos` : (r.title || "File") + (r.size ? ` · ${fmtSize(r.size)}` : "");
     $("linkInfo").textContent = `${PLATFORM_NAME[r.platform] || r.platform} · ${what}`;
     $("linkQualityRow").classList.toggle("hidden", !r.quality);
     $("linkBundleRow").classList.toggle("hidden", !r.playlist);
@@ -983,11 +1146,12 @@ const STATE_LABEL = {
   paused: "Paused",
   downloading: "Downloading from Telegram",
   extracting: "Extracting",
-  uploading: "Moving into Drive",
+  uploading: "Moving into Google Drive",
   splitting: "Splitting into parts",
   zipping: "Zipping the folder",
   sending: "Sending to Telegram",
   preparing: "Reading the link",
+  preparing: "Preparing files for compression",
   compressing: "Compressing (7-Zip)",
   "packing archive": "Packing playlist into one archive",
   "compressing video": "Compressing video",
@@ -1058,6 +1222,7 @@ async function loadJobs() {
       if (pref("ls-notify")) ls.notify("Lecture Sync", j.kind === "upload" || (j.kind === "link" && j.to === "telegram") ? `Sent → ${j.dest}` : `Finished → ${placeName(j.dest)}`);
       chime();
       if (j.kind !== "upload" && !(j.kind === "link" && j.to === "telegram") && j.dest === cwd) loadDrive();
+      if (mode === "c2c" && c2cPath !== null && j.dest === c2cPath) loadC2cDest(c2cPath).catch(() => {});
     }
     const state = j.paused && !FINISHED.includes(j.state) ? "paused" : j.state;
     const fill = el("i");
@@ -1091,6 +1256,8 @@ async function loadJobs() {
       }));
     } else if (j.state === "done" && j.kind !== "upload" && !(j.kind === "link" && j.to === "telegram") && j.dest !== undefined) {
       actions.push(jobButton("Open folder", "folder", "", async () => {
+        if (mode === "c2c" && isMs(j.dest) === (c2cDst() === "ms")) return loadC2cDest(j.dest);
+        if (mode === "c2c" && isMs(j.dest) === isMs(cwd)) return loadDrive(j.dest);
         if (mode === "drive2tg" || mode === "c2c") setMode("tg2drive");
         await loadDrive(j.dest);
       }));
@@ -1142,6 +1309,7 @@ async function openSettingsDialog(tab) {
   $("apiHash").value = "";
   $("msClientId").value = c.msClientId || "";
   $("msTenant").value = c.msTenant || "";
+  setMsMode(c.msMode || "personal");
   for (const inp of document.querySelectorAll("#settings [data-pref]")) inp.checked = pref(inp.dataset.pref);
   $("retryCount").value = String(retries());
   showSettingsTab(tab);
@@ -1337,6 +1505,20 @@ $("driveSelAll").onclick = () => {
     if (c && !li.classList.contains("filtered-out") && !c.checked) { c.checked = true; c.onchange(); }
   }
 };
+$("driveSelDel").onclick = () => guard(async () => {
+  const items = [...driveSel.values()].filter((it) => !it.library);
+  if (!items.length) return;
+  const bin = isMs(cwd) ? "recycle bin" : "Google Drive trash";
+  const word = `delete ${items.length}`;
+  const typed = await ask(`Type "${word}" to delete ${items.length} selected item${items.length > 1 ? "s" : ""}. They go to the ${bin}.`, "");
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== word) return toast("Text didn't match, nothing was deleted.", true);
+  let failed = 0;
+  for (const it of items) { try { await api("POST", "/drive/delete", { path: it.full }); } catch { failed++; } }
+  toast(failed ? `${items.length - failed} deleted, ${failed} failed.` : `Moved ${items.length} item${items.length > 1 ? "s" : ""} to the ${bin}.`, Boolean(failed));
+  await loadDrive();
+  if (mode === "c2c" && c2cPath !== null) loadC2cDest(c2cPath).catch(() => {});
+});
 $("driveSelSend").onclick = () => guard(async () => {
   if (await sendToTelegram([...driveSel.values()])) loadDrive();
 });
@@ -1388,19 +1570,37 @@ $("provG").onclick = () => guard(() => switchProvider(false));
 $("provMs").onclick = () => guard(() => switchProvider(true));
 $("msAccount").onclick = () => guard(async () => {
   await api("POST", "/ms/logout");
+  msConnected = false;
+  for (const k of [...driveCache.keys()]) if (isMs(k)) driveCache.delete(k);
   await ls.msForget?.().catch(() => null);
   toast("Signed out of Microsoft.");
   await loadDrive(lastIn.g);
 });
+let msMode = "personal";
+function setMsMode(m) {
+  msMode = m === "custom" ? "custom" : "personal";
+  for (const b of document.querySelectorAll("[data-msmode]")) {
+    const on = b.dataset.msmode === msMode;
+    b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on));
+  }
+  $("msCustomFields").classList.toggle("hidden", msMode !== "custom");
+  $("msPersonalNote").classList.toggle("hidden", msMode === "custom");
+}
+for (const b of document.querySelectorAll("[data-msmode]")) b.onclick = () => setMsMode(b.dataset.msmode);
 $("saveMs").onclick = () => guard(async () => {
+  const custom = msMode === "custom";
   const id = $("msClientId").value.trim();
   const tenant = $("msTenant").value.trim().toLowerCase();
+  if (custom && !id) return toast("Paste your custom app ID, or choose Personal.", true);
   if (id && !/^[0-9a-f-]{36}$/i.test(id)) return toast("The app ID looks like 00000000-0000-0000-0000-000000000000.", true);
   if (tenant && !/^[a-z0-9.-]{1,100}$/.test(tenant)) return toast("The organization looks like university.edu.", true);
   if (id && !tenant) return toast("Add your organization domain (e.g. must.edu.eg) for a custom app ID.", true);
-  await ls.saveMicrosoft(id, tenant);
+  await ls.saveMicrosoft(id, tenant, msMode);
+  await api("POST", "/ms/logout").catch(() => null);
+  msConnected = false;
+  for (const k of [...driveCache.keys()]) if (isMs(k)) driveCache.delete(k);
   await ls.configureMicrosoft().catch((e) => toast(cleanError(e), true));
-  toast(id ? "Custom Microsoft app ID saved." : "Using the built-in Microsoft sign-in.");
+  toast(custom ? "University sign-in selected — sign in to OneDrive again." : "Personal sign-in selected (Outlook / Hotmail) — sign in to OneDrive again.");
 });
 // ------------------------------------------------ keyboard shortcuts
 document.addEventListener("keydown", (e) => {

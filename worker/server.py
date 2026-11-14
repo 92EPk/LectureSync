@@ -140,7 +140,10 @@ def client() -> TelegramClient:
 def safe_path(rel: str) -> Path:
     """Resolve a Drive-relative path and refuse anything outside MyDrive."""
     p = (DRIVE_ROOT / rel.lstrip("/")).resolve()
-    if p != DRIVE_ROOT.resolve() and DRIVE_ROOT.resolve() not in p.parents:
+    # "Add shortcut to Drive" folders resolve into /content/drive/.shortcut-targets-by-id/<id>/,
+    # and Shared drives live in /content/drive/Shareddrives/: both are inside the Drive mount, so allow them.
+    mount = DRIVE_ROOT.parent.resolve()
+    if p != DRIVE_ROOT.resolve() and DRIVE_ROOT.resolve() not in p.parents and mount not in p.parents:
         raise HTTPException(status_code=400, detail="path outside drive")
     return p
 
@@ -426,6 +429,8 @@ def drive_rename(body: RenameIn):
     if is_ms(body.path):
         ms_rename(body.path, body.new_name)
         return {"ok": True}
+    if (DRIVE_ROOT / body.path.strip("/")).is_symlink():
+        raise HTTPException(status_code=400, detail="shortcuts can't be renamed here; rename it on drive.google.com")
     src = safe_path(body.path)
     src.rename(src.with_name(body.new_name))
     return {"ok": True}
@@ -436,8 +441,10 @@ def drive_delete(body: PathIn):
     if is_ms(body.path):
         ms_delete(body.path)
         return {"ok": True}
+    if (DRIVE_ROOT / body.path.strip("/")).is_symlink():
+        raise HTTPException(status_code=400, detail="this is a shortcut to a shared folder; remove the shortcut from drive.google.com")
     target = safe_path(body.path)
-    if target == DRIVE_ROOT.resolve():
+    if target in (DRIVE_ROOT.resolve(), DRIVE_ROOT.parent.resolve()) or target.parent.name in (".shortcut-targets-by-id", "Shareddrives") and target.parent.parent == DRIVE_ROOT.parent.resolve():
         raise HTTPException(status_code=400, detail="refusing to delete drive root")
     # Mounted Drive moves removed items to Drive's own trash, so this is recoverable
     # for 30 days from drive.google.com.
@@ -1192,19 +1199,36 @@ async def check_target(body: TargetIn):
     return {"ok": True, "title": title}
 
 
-async def _7z(job: Job, args: list[str]) -> None:
+async def _7z(job: Job, args: list[str], ok_codes: tuple = (0,)) -> None:
+    """Run 7-Zip and feed its live percentage (-bsp1) into job.progress."""
     proc = await asyncio.create_subprocess_exec(
-        "7z", *args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        "7z", args[0], "-bsp1", "-bso0", *args[1:], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    errbuf = bytearray()
+
+    async def _read_err():
+        while chunk := await proc.stderr.read(4096):
+            errbuf.extend(chunk[-2000:])
+
+    async def _read_progress():
+        buf = b""
+        while chunk := await proc.stdout.read(512):
+            buf = (buf + chunk)[-256:]
+            hits = re.findall(rb"(\d{1,3})%", buf)
+            if hits:
+                job.progress = max(job.progress or 0.0, min(int(hits[-1]), 100) / 100 * 0.99)
+                buf = b""
+
     try:
-        _, err = await proc.communicate()
+        await asyncio.gather(_read_progress(), _read_err(), proc.wait())
     finally:
         if proc.returncode is None:
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
-    if proc.returncode != 0:
-        raise RuntimeError(f"{job.state} failed: " + (err or b"").decode(errors="ignore")[-300:])
+    if proc.returncode not in ok_codes:
+        raise RuntimeError(f"{job.state} failed: " + bytes(errbuf).decode(errors="ignore")[-300:])
 
 
 UP_WORKERS = int(os.environ.get("LS_UP_WORKERS", "8"))
@@ -2418,10 +2442,23 @@ def _ms_split(path: str) -> tuple[str, str]:
 
 
 def _ms_item(d: str, rel: str) -> str:
-    return f"/drives/{d}/root" + (f":/{urllib.parse.quote(rel)}:" if rel else "")
+    # "drive~item" anchors a path at a shared folder added as a shortcut (it lives in another drive).
+    did, _, iid = d.partition("~")
+    base = f"/drives/{did}/items/{iid}" if iid else f"/drives/{did}/root"
+    return base + (f":/{urllib.parse.quote(rel)}:" if rel else "")
+
+
+def _ms_target(c: dict) -> tuple[dict, str | None]:
+    """A listed child, or for a shortcut (remoteItem) the real folder/file it points to, plus its anchor."""
+    r = c.get("remoteItem")
+    if r and r.get("id") and (r.get("parentReference") or {}).get("driveId"):
+        return {**r, "name": c.get("name") or r.get("name")}, f"{r['parentReference']['driveId']}~{r['id']}"
+    return c, None
 
 
 def _ms_label(d: str) -> str:
+    if "~" in d:
+        return "Shared shortcut"
     if d not in MS["labels"]:
         try:
             MS["labels"][d] = _g("GET", f"/drives/{d}?$select=name").get("name") or "Library"
@@ -2468,14 +2505,18 @@ def ms_list(path: str) -> dict:
             items = [{"name": r["name"], "dir": True, "size": 0, "modified": 0, "path": f"ms:{r['id']}", "library": True}
                      for r in _ms_roots()]
             return {"path": "ms:", "items": items, "mounted": True, "provider": "ms", "label": "", "user": MS["user"]}
-        items, url = [], _ms_item(d, rel) + "/children?$top=999&$select=name,size,folder,file,lastModifiedDateTime"
+        items, url = [], _ms_item(d, rel) + "/children?$top=999&$select=name,size,folder,file,lastModifiedDateTime,remoteItem"
         while url:
             r = _g("GET", url)
-            for c in r.get("value", []):
+            for raw in r.get("value", []):
+                c, anchor = _ms_target(raw)
                 if "folder" not in c and "file" not in c:
                     continue  # OneNote notebooks and other non-file items
-                items.append({"name": c["name"], "dir": "folder" in c, "size": 0 if "folder" in c else c.get("size", 0),
-                              "modified": _ms_ts(c.get("lastModifiedDateTime"))})
+                it = {"name": c["name"], "dir": "folder" in c, "size": 0 if "folder" in c else c.get("size", 0),
+                      "modified": _ms_ts(c.get("lastModifiedDateTime") or raw.get("lastModifiedDateTime"))}
+                if anchor:
+                    it["path"] = f"ms:{anchor}"  # open the shortcut at its real location
+                items.append(it)
             url = r.get("@odata.nextLink")
     except MsError as e:
         raise _ms_http(e)
@@ -2537,6 +2578,11 @@ def ms_delete(path: str) -> None:
 
 def _ms_tree(d: str, item: dict, prefix: str) -> list[tuple[str, int, str, str]]:
     """Every file under item as (relative path, size, drive id, item id)."""
+    if item.get("remoteItem"):  # shortcut to a shared folder/file in another drive
+        r = item["remoteItem"]
+        rd = (r.get("parentReference") or {}).get("driveId")
+        if rd and r.get("id"):
+            return _ms_tree(rd, _g("GET", f"/drives/{rd}/items/{r['id']}"), prefix)
     if "file" in item:
         return [(prefix, int(item.get("size") or 0), d, item["id"])]
     if "folder" not in item:
@@ -2553,7 +2599,15 @@ def _ms_tree(d: str, item: dict, prefix: str) -> list[tuple[str, int, str, str]]
 
 def _ms_get(path: str) -> tuple[str, dict]:
     d, rel = _ms_need_folder(path)
-    return d, _g("GET", _ms_item(d, rel))
+    item = _g("GET", _ms_item(d, rel))
+    if item.get("remoteItem"):
+        t, anchor = _ms_target(item)
+        d, iid = anchor.split("~") if anchor else (d, "")
+        if iid:
+            item = {**_g("GET", f"/drives/{d}/items/{iid}"), "name": item.get("name")}
+    # The real drive id (never the "drive~item" anchor) so later /drives/{d}/items calls work.
+    d = (item.get("parentReference") or {}).get("driveId") or d.partition("~")[0]
+    return d, item
 
 
 def ms_info(path: str) -> tuple[str, bool, list[int]]:
@@ -2963,6 +3017,28 @@ async def _run_copy(job: Job) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _stage_folder(job: Job, src: Path, into: Path) -> Path:
+    """Copy a Drive folder's readable files (no Google Docs) to scratch, sequentially, with live progress."""
+    files = _folder_files(src)
+    out = into / src.name
+    out.mkdir(parents=True, exist_ok=True)
+    total = sum(f.stat().st_size for f in files) or 1
+    done, t0 = 0, time.monotonic()
+    job.state, job.progress, job.speed = "preparing", 0.0, 0.0
+    for f in files:
+        dst = out / f.relative_to(src)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "rb") as a, open(dst, "wb") as b:
+            while chunk := a.read(8 * MIB):
+                b.write(chunk)
+                done += len(chunk)
+                job.progress = done / total
+                job.speed = done / max(time.monotonic() - t0, 0.001)
+    for d in (x for x in src.rglob("*") if x.is_dir()):  # keep empty folders
+        (out / d.relative_to(src)).mkdir(parents=True, exist_ok=True)
+    return out
+
+
 async def _copy_compressed(job: Job, local: Path, work: Path) -> None:
     """Pack the source into one zip (or 7z volumes), re-check space, then drop it at the destination."""
     size = job.size or (sum(f.stat().st_size for f in _folder_files(local)) if local.is_dir() else local.stat().st_size)
@@ -2975,10 +3051,16 @@ async def _copy_compressed(job: Job, local: Path, work: Path) -> None:
     split = job.split_mb and size > job.split_mb * MIB
     ext = "7z" if split else "zip"
     level = "-mx0" if (not local.is_dir() and local.name.lower().endswith(PACKED_EXT + VIDEO_EXT)) else "-mx1"
-    args = ["a", "-y", level, "-mmt=on"] + ([f"-v{job.split_mb}m"] if split else ["-tzip"])
+    args = ["a", "-y", level, "-mmt=2"] + ([f"-v{job.split_mb}m"] if split else ["-tzip"])
     args += [f"-xr!*{e}" for e in sorted(GOOGLE_DOC_EXTS)]
+    if local.is_dir() and SCRATCH.resolve() not in local.resolve().parents:
+        # 7-Zip walking a Drive (FUSE) folder tree can hang forever at 0%. Copy the readable files
+        # to Colab's own disk one by one first, then pack from there.
+        local = await asyncio.to_thread(_stage_folder, job, local, work / "src")
     job.state, job.progress, job.speed = "compressing", 0.0, 0.0
-    await _7z(job, args + [str(pack / f"{base}.{ext}"), str(local)])
+    # FUSE (Drive) often makes 7-Zip return 1 = warnings only; accept it if an archive came out.
+    await _7z(job, args + [str(pack / f"{base}.{ext}"), str(local)], ok_codes=(0, 1))
+    job.progress = 1.0
     files = sorted(pack.glob(f"{base}.{ext}*"))
     if not files:
         raise RuntimeError("compressing produced nothing")
@@ -2986,8 +3068,12 @@ async def _copy_compressed(job: Job, local: Path, work: Path) -> None:
     await asyncio.to_thread(_need_dest, job.dest, out, "for the archive")
     job.name = files[0].name if len(files) == 1 else f"{base}.7z ({len(files)} parts)"
     job.size = out
+    if is_ms(job.dest):
+        job.state, job.progress, job.speed = "uploading to Microsoft", 0.0, 0.0
+        await _ms_push(job, files)       # straight from scratch to OneDrive, with live progress
+        return
     job.state, job.progress, job.speed = "uploading", 0.0, 0.0
-    dest = _dest_dir(job)  # Drive folder, or the OneDrive staging area pushed afterwards
+    dest = _dest_dir(job)
     for f in files:
         await asyncio.to_thread(move_with_progress, job, f, unique(dest / f.name))
 

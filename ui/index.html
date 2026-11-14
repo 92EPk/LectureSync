@@ -197,27 +197,40 @@
             </div>
 
             <div id="c2cBody" class="c2c-body hidden">
-              <h2 data-icon="cloud">Cloud to cloud</h2>
-              <p class="muted small">Copy between Google Drive and OneDrive inside Google's datacenter — your internet isn't used.</p>
-              <div class="seg c2c-dir" role="tablist" aria-label="Direction">
-                <button type="button" class="seg-btn" data-c2c="g">Google Drive → OneDrive</button>
-                <button type="button" class="seg-btn" data-c2c="ms">OneDrive → Google Drive</button>
+              <div class="pane-head">
+                <h2 data-icon="cloud">To <span id="c2cTo"></span></h2>
+                <div class="row tight">
+                  <button type="button" id="c2cSwap" class="icon-btn" data-icon="swap" title="Swap direction" aria-label="Swap direction"></button>
+                  <button type="button" id="c2cUp" class="icon-btn" data-icon="up" title="Up one folder" aria-label="Up one folder"></button>
+                  <button type="button" id="c2cRefresh" class="icon-btn" data-icon="refresh" title="Refresh" aria-label="Refresh"></button>
+                  <button type="button" id="c2cMkdir" class="icon-btn" data-icon="plus" title="New folder" aria-label="New folder"></button>
+                </div>
               </div>
-              <div class="copy-route c2c-route">
-                <div><small class="muted">From</small><b id="c2cFrom"></b><span id="c2cWhat" class="muted small"></span></div>
-                <button type="button" id="c2cSwap" class="icon-btn" data-icon="swap" title="Swap direction" aria-label="Swap direction"></button>
-                <div><small class="muted">To</small><b id="c2cTo"></b>
-                  <button type="button" id="c2cPick" class="secondary small" data-icon="folder">Choose folder</button></div>
+              <div id="c2cCrumb" class="crumb"></div>
+              <div id="c2cSelBar" class="selbar">
+                <span id="c2cSelCount">Manage this folder</span>
+                <div class="row tight">
+                  <button type="button" id="c2cSelAll" class="ghost small">Select all</button>
+                  <button type="button" id="c2cSelClear" class="ghost small">Unselect</button>
+                  <button type="button" id="c2cSelDel" class="ghost small danger hidden">Delete</button>
+                </div>
               </div>
-              <div id="c2cPicking" class="callout hidden">
-                Open the destination folder on the right, then press <b>Use this folder</b>.
-                <div class="row end"><button type="button" id="c2cPickCancel" class="ghost small">Cancel</button>
-                <button type="button" id="c2cPickDone" class="primary small">Use this folder</button></div>
+              <ul id="c2cList" class="list"></ul>
+              <p id="c2cEmpty" class="empty hidden">No folders here.</p>
+              <div class="row end hidden" id="c2cConnectRow"><button type="button" id="c2cConnect" class="secondary small">Connect OneDrive</button></div>
+              <label class="srow c2c-opt link-compress" id="c2cCompressRow" title="Packs everything into one ZIP. Google Docs are skipped."><div><b>Compress before copying</b></div><input type="checkbox" class="switch" id="c2cCompress" /></label>
+              <div class="srow c2c-opt c2c-split hidden" id="c2cSplitRow" title="Only if bigger than the part size. Parts open with 7-Zip."><div><b>Split</b></div>
+                <div class="seg" role="radiogroup" id="c2cSplit">
+                  <button type="button" class="seg-btn on" data-mb="0">One file</button>
+                  <button type="button" class="seg-btn" data-mb="2000">2 GB</button>
+                  <button type="button" class="seg-btn" data-mb="4000">4 GB</button>
+                </div>
               </div>
-              <p id="c2cHint" class="muted small">Tick files or folders on the right.</p>
-              <div class="row end">
-                <button type="button" id="c2cStart" class="primary" data-icon="copy" disabled>Copy</button>
+              <div class="selbar">
+                <span id="c2cWhat"></span>
+                <button type="button" id="c2cStart" class="primary small" data-icon="copy" disabled>Copy</button>
               </div>
+              <p class="hint">Open the folder to copy into. Files you tick on the left go here.</p>
             </div>
 
             <div id="t2dBody">
@@ -280,6 +293,7 @@
               <div class="row tight">
                 <button id="driveSelAll" class="ghost small">Select all</button>
                 <button id="driveSelClear" class="ghost small">Unselect</button>
+                <button id="driveSelDel" class="ghost small danger hidden">Delete</button>
                 <button id="driveSelSend" class="primary small" data-icon="send">Send to Telegram</button>
               </div>
             </div>
@@ -312,8 +326,9 @@
       <button id="accMs" class="acc" type="button" title="OneDrive / SharePoint">OneDrive · Sign in</button>
     </div>
     <div id="disk" class="disk hidden">
-      <span id="diskText"></span>
-      <div class="meter"><i id="diskFill"></i></div>
+      <span class="dk" id="dkColab"><span id="diskText"></span><span class="meter"><i id="diskFill"></i></span></span>
+      <span class="dk hidden" id="dkDrive"><span id="driveText"></span><span class="meter"><i id="driveFill"></i></span></span>
+      <span class="dk hidden" id="dkMs"><span id="msText"></span><span class="meter"><i id="msFill"></i></span></span>
     </div>
     <span class="grow"></span>
     <span id="ver" class="muted"></span>
@@ -385,14 +400,24 @@
           </div>
         </div>
         <div class="skeys">
+          <div class="ms-mode">
+            <span>Microsoft account type</span>
+            <div class="seg" role="radiogroup" aria-label="Microsoft account type">
+              <button type="button" class="seg-btn" data-msmode="personal" role="radio">Personal (Outlook / Hotmail)</button>
+              <button type="button" class="seg-btn" data-msmode="custom" role="radio">University / custom app</button>
+            </div>
+          </div>
+          <div id="msCustomFields">
           <label>Custom Microsoft app ID <span class="muted">(optional — OneDrive / SharePoint work without it)</span>
             <input id="msClientId" placeholder="Leave empty to use the built-in one" spellcheck="false" /></label>
           <label>Organization domain <span class="muted">(needed with a custom app ID, e.g. must.edu.eg)</span>
             <input id="msTenant" placeholder="university.edu" spellcheck="false" /></label>
           <p class="muted small">Microsoft sign-in works out of the box, including university accounts. Only advanced users who registered their own app need to paste its Application (client) ID here.</p>
+          </div>
+          <p id="msPersonalNote" class="muted small">Uses the built-in sign-in — works with Outlook, Hotmail and Live accounts. Your university details stay saved.</p>
           <div class="row">
             <span class="grow"></span>
-            <button type="button" id="saveMs" class="primary">Save app ID</button>
+            <button type="button" id="saveMs" class="primary">Save</button>
           </div>
         </div>
       </section>
@@ -513,7 +538,7 @@
   <dialog id="history">
     <form method="dialog">
       <h3>Transfer history</h3>
-      <p class="muted small">Files you moved to Drive from this PC.</p>
+      <p class="muted small">Files you moved to Google Drive from this PC.</p>
       <ul id="historyList" class="list history"></ul>
       <p id="historyEmpty" class="empty hidden">Nothing yet.</p>
       <div class="row end">
@@ -523,7 +548,7 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" popover="manual"></div>
 
   <script src="app.js"></script>
 </body>

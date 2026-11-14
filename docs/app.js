@@ -13,21 +13,21 @@
     t1: "تليجرام ← السحابة", t2: "السحابة ← تليجرام", t3: "الروابط", t4: "سحابة ⇄ سحابة",
     s1: "من باقتك لكل محاضرة", s2: "اتصالات متوازية بتليجرام", s3: "فك تشفير مُسرَّع بلغة C", s4: "خدمتا تخزين، وفي كل الاتجاهات",
     e1: "01 — المسارات", h2a: "أربعة مسارات. سحابتان. كل الاتجاهات.",
-    p1t: "تليجرام ← Drive / OneDrive", p1d: "اختر الملفات من أي محادثة أو الصق رابط t.me. تُفك الملفات المضغوطة (zip وrar و7z والأجزاء المقسمة) تلقائيًا عند وصولها.",
-    p2t: "Drive / OneDrive ← تليجرام", p2d: "أرسل ملفات أو مجلدات كاملة إلى أي محادثة أو قناة. ما يتجاوز حد تليجرام يُقسَّم — بعد موافقتك فقط.",
-    p3t: "من رابط إلى أي وجهة", p3d: "يوتيوب (والقوائم كاملة) وSharePoint وOneDrive وDrive وDropbox وMediaFire أو أي رابط مباشر — إلى أي من السحابتين أو تليجرام.",
-    p4t: "Drive ⇄ OneDrive", p4d: "انسخ بين خدمتي Google وMicrosoft مباشرةً من مركز بيانات إلى آخر، في الاتجاهين.",
+    p1t: "تليجرام ← Google Drive / OneDrive", p1d: "اختر الملفات من أي محادثة أو الصق رابط t.me. تُفك الملفات المضغوطة (zip وrar و7z والأجزاء المقسمة) تلقائيًا عند وصولها.",
+    p2t: "Google Drive / OneDrive ← تليجرام", p2d: "أرسل ملفات أو مجلدات كاملة إلى أي محادثة أو قناة. ما يتجاوز حد تليجرام يُقسَّم — بعد موافقتك فقط.",
+    p3t: "من رابط إلى أي وجهة", p3d: "يوتيوب (والقوائم كاملة) وSharePoint وOneDrive وGoogle Drive وDropbox وMediaFire أو أي رابط مباشر — إلى أي من السحابتين أو تليجرام.",
+    p4t: "Google Drive ⇄ OneDrive", p4d: "انسخ بين خدمتي Google وMicrosoft مباشرةً من مركز بيانات إلى آخر، في الاتجاهين.",
     e2: "02 — آلية العمل", h2b: "جهازك يُصدر الأوامر، وشبكة Google تتولى النقل.",
     f1s: "جهازك", f1: "تطبيق LectureSync", f1d: "أوامر فقط", f2s: "جهاز Colab الخاص بك", gb: "جيجابايتات",
     c0a: "الطريقة اليدوية", c1: "البيانات المارة عبر اتصالك", c1a: "حجم الملف مرتين", c2: "المساحة المطلوبة على جهازك", c2a: "الملف المضغوط ونسخته المفكوكة",
-    none: "لا شيء", c3: "فك الضغط", c3a: "يدويًا", auto: "تلقائي", c4: "خدمات التخزين", c4a: "واحدة في كل مرة", c4b: "Drive وOneDrive، في الاتجاهين",
+    none: "لا شيء", c3: "فك الضغط", c3a: "يدويًا", auto: "تلقائي", c4: "خدمات التخزين", c4a: "واحدة في كل مرة", c4b: "Google Drive وOneDrive، في الاتجاهين",
     e3: "03 — المزايا", h2c: "مصمَّم لمحتوى المقررات الحقيقي.",
     b1t: "OneDrive وSharePoint بشكل متكامل", b1d: "حسابات شخصية وجامعية عبر تسجيل الدخول من المتصفح أو برمز الجهاز، دون الحاجة لموافقة مسؤول. مكتبات SharePoint الخاصة بمقرراتك، ومدير ملفات، ومتابعة المساحة المتاحة.",
     b2t: "اتصالات MTProto متوازية", b2d: "حتى 8 اتصالات مستقلة بمركز البيانات الذي يحتوي الملف، مع انتظار تلقائي عند تقييد الطلبات.",
     b3t: "تشفير tgcrypto", b3d: "تشفير بلغة C يرفع السرعة من 0.4 إلى أكثر من 130 ميجابايت/ث، مع بديل آمن إن تعذّر تثبيته.",
     b4t: "ضغط ذكي", b4d: "إعادة ترميز بـ FFmpeg مضبوطة للمحاضرات تحافظ على وضوح الشرائح بحجم أصغر كثيرًا.",
     b5t: "قوائم التشغيل كما تريد", b5d: "فيديوهات منفصلة، أو أرشيف 7-Zip واحد مقسَّم بأجزاء تناسب تليجرام.",
-    b6t: "الخصوصية أساس التصميم", b6d: "ربط آمن بنقرة واحدة من Colab، ومفاتيحك محفوظة في خزنة نظام التشغيل، وجلساتك في Drive الخاص بك. لا يمر شيء عبرنا.",
+    b6t: "الخصوصية أساس التصميم", b6d: "ربط آمن بنقرة واحدة من Colab، ومفاتيحك محفوظة في خزنة نظام التشغيل، وجلساتك في Google Drive الخاص بك. لا يمر شيء عبرنا.",
     e4: "04 — التحميل", h2d: "مجاني لكل طالب.",
     unsigned: "الإصدارات غير موقَّعة رقميًا بعد، لذا قد يظهر تحذير من Windows أو macOS عند أول تشغيل. تحقق من الملف عبر بصمات SHA-256 المنشورة مع كل إصدار.",
     q1: "أضف مفاتيح Telegram API من my.telegram.org.", q2: "اضغط «تشغيل محرك Colab» ثم Run في Colab.", q3: "اضغط «Connect to LectureSync» — دون نسخ أو منافذ.", q4: "امسح رمز QR مرة واحدة، اختر المسار، وأرسل.",
@@ -56,7 +56,7 @@
   let cur = 0, timer;
   const show = (i) => { cur = i; tabs.forEach((b, j) => b.classList.toggle("on", j === i)); imgs.forEach((m, j) => m.classList.toggle("on", j === i)); };
   tabs.forEach((b) => (b.onclick = () => { clearInterval(timer); show(+b.dataset.i); }));
-  timer = setInterval(() => show((cur + 1) % 3), 4500);
+  timer = setInterval(() => show((cur + 1) % tabs.length), 4500);
 
   const ua = navigator.userAgent;
   const os = /Windows/i.test(ua) ? "windows" : /Mac/i.test(ua) ? "mac" : /Linux|X11/i.test(ua) && !/Android/i.test(ua) ? "linux" : null;
@@ -83,7 +83,9 @@
     const assets = rel.assets.filter((a) => !/blockmap|\.yml$/i.test(a.name));
     const date = new Date(rel.published_at).toLocaleDateString(ar ? "ar-EG" : "en-GB", { year: "numeric", month: "short", day: "numeric" });
     $("#relPill").textContent = ar ? `الإصدار ${rel.tag_name} متاح الآن` : `${rel.tag_name} is out — see what’s new`;
-    $("#releaseMeta").textContent = `${rel.tag_name} · ${date} · Windows · macOS · Linux`;
+    const others = ["windows", "mac", "linux"].filter((k) => k !== os);
+    const link = (k) => { const a = { windows: assets.find((x) => /Setup.*\.exe$/i.test(x.name)) || assets.find((x) => /\.exe$/i.test(x.name)), mac: assets.find((x) => /arm64.*\.dmg$/i.test(x.name)) || assets.find((x) => /\.dmg$/i.test(x.name)), linux: assets.find((x) => /\.AppImage$/i.test(x.name)) || assets.find((x) => /\.deb$/i.test(x.name)) }[k]; return `<a href="${a ? a.browser_download_url : "#download"}">${osName[k]}</a>`; };
+    $("#releaseMeta").innerHTML = `${rel.tag_name} · ${date} · ${ar ? "متاح أيضاً لـ" : "Also for"} ${others.map(link).join(" · ")} · <a href="#download">${ar ? "كل الملفات" : "All files"}</a>`;
     $$(".files").forEach((ul) => {
       const list = assets.filter((a) => new RegExp(ul.dataset.match, "i").test(a.name));
       ul.innerHTML = list.length
