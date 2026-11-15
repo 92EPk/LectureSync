@@ -157,7 +157,9 @@ def health():
 
 
 @app.get("/disk", dependencies=auth)
-def disk():
+def disk(refresh: int = 0):
+    if refresh:
+        _MS_QUOTA["t"] = 0.0  # caller wants fresh numbers (a transfer just finished)
     u = shutil.disk_usage(SCRATCH)
     out = {"total": u.total, "used": u.used, "free": u.free}
     if drive_mounted():
@@ -3068,10 +3070,13 @@ async def _rclone_push(job: Job, local: Path) -> bool:
     await asyncio.to_thread(_rclone_conf, d)
     dst = "/".join(x for x in (base, local.name if local.is_dir() else "") if x)
     cmd = [exe, "copy", str(local) if local.is_dir() else str(local.parent), f"ms:{dst}",
-           "--config", str(RCLONE_CONF), "--transfers", "4", "--checkers", "8",
-           "--onedrive-chunk-size", "30Mi", "--buffer-size", "32Mi",
+           "--config", str(RCLONE_CONF), "--create-empty-src-dirs",
+           # Low parallelism + sequential reads keep the Drive (FUSE) mount from freezing Colab.
+           "--transfers", "2", "--checkers", "2", "--multi-thread-streams", "0",
+           "--onedrive-chunk-size", "32Mi", "--buffer-size", "16Mi",
+           "--timeout", "10m", "--contimeout", "1m",
            "--retries", "10", "--low-level-retries", "20", "--retries-sleep", "10s",
-           "--tpslimit", "8", "--use-json-log", "--stats", "2s", "--stats-log-level", "NOTICE",
+           "--tpslimit", "4", "--use-json-log", "--stats", "2s", "--stats-log-level", "NOTICE",
            "--log-level", "NOTICE", "--exclude", "*.{gdoc,gsheet,gslides,gform,gdraw,gmap,gsite,gjam}"]
     if not local.is_dir():
         cmd += ["--include", "/" + local.name.replace("[", "\\[").replace("*", "\\*")]

@@ -50,11 +50,26 @@ Google Drive and **OneDrive / SharePoint** are first-class peers: every pipeline
 
 ### OneDrive & SharePoint (Microsoft Graph)
 
-- **Personal and work / university accounts** (e.g. `@university.edu.eg`) — sign in with a browser OAuth flow (PKCE) or a **device code**, which works even where embedded sign-in is blocked.
-- **No admin consent required** — uses a public client ID with delegated, user-level permissions only.
+- **Work / university accounts** (e.g. `@university.edu.eg`) — sign in with your organisation's app ID via browser OAuth (PKCE) or a **device code**.
+- **Personal Microsoft accounts** (`@outlook.com`, `@hotmail.com`) — one-click browser sign-in (PKCE on `http://localhost:53682/`) using rclone's public multi-tenant client ID. No Azure Portal registration needed. Close any running rclone during sign-in, since it uses the same port.
+- **No admin consent required** — delegated, user-level permissions only.
 - **SharePoint document libraries** — your shared course sites appear next to *My files*.
 - **Full file manager** — browse, create, rename and delete (to the recycle bin), with live storage quota.
 - Large uploads use Graph **resumable upload sessions**, so multi-gigabyte files survive network hiccups.
+
+### Cloud ⇄ Cloud with rclone
+
+- **rclone fast path** — Drive ⇄ OneDrive / SharePoint copies run through [rclone](https://rclone.org), datacenter to datacenter, with resumable chunked uploads and automatic skip of already-copied files (safe to resume after a disconnect).
+- **Tuned for Colab stability** — Drive is read through Colab's FUSE mount, which stalls under heavy parallel reads. The worker uses `--transfers 2 --checkers 2 --multi-thread-streams 0 --buffer-size 16Mi --tpslimit 4` plus long timeouts and retries, so large folders finish without the runtime disconnecting.
+- **Full folder structure** — empty folders are copied too (`--create-empty-src-dirs`).
+- **Google-native stubs skipped** — `.gdoc`, `.gsheet`, `.gslides`… are cloud shortcuts, not real files, so they are excluded instead of failing the job.
+- **Fallback** — if rclone is unavailable (or for shortcut folders), the worker uploads through Microsoft Graph directly.
+
+### Drive / OneDrive → Telegram options
+
+- **Multi-select** files and folders and send them to any chat, group or channel.
+- **Folders** go as one 7-Zip archive (split automatically above Telegram's limit) or file by file.
+- **Enter to send** — pressing Enter in the *Save as* field sends the transfer instead of cancelling the dialog.
 
 ### Link import options
 
@@ -218,6 +233,26 @@ LectureSync is an educational utility. It uses only official interfaces — the 
 - Quick-tunnel URLs are ephemeral; the app rediscovers them automatically.
 - Telegram's file-size limit applies (higher with Premium); bigger files are split into parts.
 - Colab UI automation depends on Colab's page structure and may need updates when it changes.
+
+## Third-party tools & acknowledgements
+
+LectureSync is MIT-licensed. It relies on these open-source projects. GPL/LGPL command-line tools are installed separately on the user's own Colab VM and run as separate processes. They are not linked into or redistributed with LectureSync.
+
+| Tool | Used for | Licence |
+|---|---|---|
+| [Electron](https://www.electronjs.org) · [electron-builder](https://www.electron.build) | Desktop app and installers | MIT |
+| [rclone](https://rclone.org) | Cloud ⇄ Cloud transfers | MIT |
+| [Telethon](https://github.com/LonamiWebs/Telethon) | Telegram MTProto client | MIT |
+| [TgCrypto](https://github.com/pyrogram/tgcrypto) | Fast MTProto encryption | LGPL-3.0 |
+| [FastAPI](https://fastapi.tiangolo.com) · [Uvicorn](https://www.uvicorn.org) | Worker HTTP API | MIT · BSD-3-Clause |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video and playlist downloads | Unlicense |
+| [7-Zip / p7zip](https://www.7-zip.org) | Extract, pack and split archives | LGPL-2.1 (+ unRAR restriction: RAR extraction only, no RAR creation) |
+| [FFmpeg](https://ffmpeg.org) | Lecture video compression | LGPL-2.1+ / GPL-2.0+ (Ubuntu build) |
+| [megatools](https://megatools.megous.com) | MEGA downloads | GPL-2.0+ |
+| [cloudflared](https://github.com/cloudflare/cloudflared) | Quick tunnel to the worker | Apache-2.0 |
+| [qrcode](https://github.com/lincolnloop/python-qrcode) | Telegram QR login | BSD-3-Clause |
+
+Each project keeps its own copyright and licence. Microsoft personal sign-in uses rclone's public OAuth client ID. Google Drive, OneDrive, Telegram and Colab are used under their own terms of service.
 
 ## License
 

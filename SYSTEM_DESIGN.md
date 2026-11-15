@@ -100,6 +100,7 @@ sequenceDiagram
 | **P1** | Telegram → Drive | Parallel download → optional 7-Zip extraction → collision-safe move into Drive |
 | **P2** | Drive → Telegram | Pre-flight checks → optional split/pack → parallel upload |
 | **P3** | Link → Drive / Telegram | Resolve share link or yt-dlp → optional ffmpeg compression → deliver |
+| **P4** | Drive ⇄ OneDrive / SharePoint | rclone fast path (FUSE-safe flags) → Graph upload fallback |
 
 ### Job lifecycle
 
@@ -185,6 +186,32 @@ The number of attempts (0–5) is a user setting synced from the app to the work
 - **System tray:** closing the window during active transfers hides it to the tray instead of quitting; minimising to tray is optional. The tray tooltip and menu show live status.
 - **Update checker:** the main process queries the GitHub Releases API, compares semantic versions with `app.getVersion()` and offers the matching installer for the user's OS and architecture.
 
+### 6.8 Colab disconnecting during big rclone copies
+
+**Symptom:** long Drive → OneDrive copies ended with *Connect to runtime*. **Cause:** Drive is read through Colab's FUSE mount, which handles parallel I/O poorly. With 4 transfers, 8 checkers and multi-thread streams, many reads overlapped on the same mount. Processes then got stuck in D-state, and Colab restarted the VM. Large buffers also added RAM pressure.
+
+**Fix:** reads are kept mostly sequential:
+
+| Flag | Value | Why |
+|---|---|---|
+| `--transfers` / `--checkers` | 2 / 2 | Keep FUSE responsive while still running in parallel |
+| `--multi-thread-streams` | 0 | No range reads of one file from several threads at once |
+| `--buffer-size` | 16Mi | Lower RAM use |
+| `--tpslimit` | 4 | Stay under Graph throttling |
+| `--timeout` · `--retries` · `--low-level-retries` | 10m · 10 · 20 | Ride out slow FUSE reads and network drops |
+| `--create-empty-src-dirs` | on | Copy the full tree, including empty folders |
+| `--exclude *.{gdoc,gsheet,…}` | on | Google-native stubs aren't readable files (`Errno 95`) |
+
+rclone skips files whose size already matches, so a restarted job continues where it stopped. Compression of Drive folders happens only after staging them to Colab scratch, because 7-Zip hangs when it walks FUSE trees.
+
+### 6.9 Microsoft sign-in for personal accounts
+
+Work and university accounts sign in with the organisation's app ID. For personal accounts, first-party Microsoft client IDs fail with `AADSTS65002`: consumers can't consent to first-party apps. Requiring every student to register an Azure app was not acceptable. Personal accounts therefore use rclone's public multi-tenant client ID with a browser PKCE flow on the loopback redirect `http://localhost:53682/`, which is the same redirect rclone registers.
+
+### 6.10 Toasts behind modal dialogs
+
+`<dialog>.showModal()` puts the dialog in the browser's top layer, which no `z-index` can beat. Toasts now use the Popover API (`popover="manual"` + `showPopover()`), so they also go into the top layer and appear above open dialogs.
+
 ## 7. Security model
 
 ```text
@@ -214,6 +241,10 @@ There is no telemetry or analytics. LectureSync registers no OAuth client of its
 | Parallel range I/O with sequential fallback | Telethon default | Over 10× faster while staying correct on errors. |
 | Serial job queue | Concurrent jobs | Predictable disk use and rate-limit safety, at the cost of total throughput. |
 | Electron | Tauri, native apps | One JavaScript codebase and mature packaging for Windows, macOS and Linux. Cost: larger binary. |
+
+### Third-party components
+
+All dependencies are permissive (MIT, BSD, Apache-2.0, Unlicense) or LGPL/GPL command-line tools. The GPL/LGPL tools (7-Zip, FFmpeg, megatools) are installed at runtime on the user's Colab VM and called as separate processes. They are never linked or redistributed, so LectureSync stays MIT. The full list is in the README.
 
 ## 9. Delivery
 

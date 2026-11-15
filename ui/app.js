@@ -198,10 +198,10 @@ ls.onLinkError((msg) => toast(msg, true));
 // ------------------------------------------------ status
 
 let failStreak = 0;
-async function refreshStatus() {
+async function refreshStatus(fresh = false) {
   try {
     const h = await api("GET", "/health");
-    const d = await api("GET", "/disk");
+    const d = await api("GET", fresh ? "/disk?refresh=1" : "/disk");
     failStreak = 0;
     connected = true;
     signedIn = Boolean(h.telegram);
@@ -1203,6 +1203,7 @@ function jobButton(label, iconName, cls, fn) {
   return b;
 }
 
+let lastDoneCount = -1, lastDiskAt = 0;
 async function loadJobs() {
   if (!retrySynced) { retrySynced = true; syncRetries(); }
   const jobs = await api("GET", "/jobs");
@@ -1210,6 +1211,13 @@ async function loadJobs() {
   // Keep the computer awake only while something is still transferring.
   ls.setKeepAwake?.(pref("ls-keep-awake") && active);
   ls.setActive?.(active);
+  // Storage meters: refresh every ~6s while transferring, and with fresh numbers the moment jobs finish.
+  const doneNow = jobs.filter((j) => FINISHED.includes(j.state)).length;
+  if (doneNow !== lastDoneCount || (active && Date.now() - lastDiskAt > 6000)) {
+    const fresh = doneNow !== lastDoneCount;
+    lastDoneCount = doneNow; lastDiskAt = Date.now();
+    refreshStatus(fresh).catch(() => {});
+  }
   $("jobsEmpty").classList.toggle("hidden", jobs.length > 0);
   const running = jobs.filter((j) => !FINISHED.includes(j.state)).length;
   $("jobsCount").textContent = running ? String(running) : "";
@@ -1372,6 +1380,7 @@ async function runUpdateCheck(manual) {
   $("updateVer").textContent = `v${r.current} → v${r.latest}`;
   $("updateNotes").textContent = r.notes || "Bug fixes and improvements.";
   if ($("about").open) $("about").close();
+  if (!manual && !document.hasFocus()) ls.notify?.("LectureSync update available", `Version ${r.latest} is ready to download.`).catch(() => {});
   $("update").showModal();
 }
 $("checkUpdate").onclick = async (e) => {
@@ -1388,7 +1397,9 @@ $("updateSkip").onclick = () => {
   if (pendingUpdate) localStorage.setItem("ls-skip-version", pendingUpdate.latest);
   $("update").close();
 };
-setTimeout(() => runUpdateCheck(false), 5000);
+// Check right after launch, retry once if offline, then every 6 hours while open.
+setTimeout(async () => { const r = await ls.checkUpdate().catch(() => null); if (r && r.ok) runUpdateCheck(false); else setTimeout(() => runUpdateCheck(false), 60000); }, 1500);
+setInterval(() => runUpdateCheck(false), 6 * 3600 * 1000);
 $("startColab").onclick = () => guard(ls.startColab);
 $("startColabExternal").onclick = () => guard(ls.startColabExternal);
 $("copyAgainExt").onclick = () => { ls.copyCell(); toast("Copied."); };
@@ -1516,6 +1527,7 @@ $("driveSelDel").onclick = () => guard(async () => {
   let failed = 0;
   for (const it of items) { try { await api("POST", "/drive/delete", { path: it.full }); } catch { failed++; } }
   toast(failed ? `${items.length - failed} deleted, ${failed} failed.` : `Moved ${items.length} item${items.length > 1 ? "s" : ""} to the ${bin}.`, Boolean(failed));
+  refreshStatus(true).catch(() => {});
   await loadDrive();
   if (mode === "c2c" && c2cPath !== null) loadC2cDest(c2cPath).catch(() => {});
 });
@@ -1667,3 +1679,6 @@ boot();
 setInterval(() => { ls.msPush?.().catch(() => null); }, 40 * 60 * 1000);
 
 /*redesign-applied*/
+
+// Cancel buttons are type="button" so Enter in a text field submits "Send" instead of cancelling.
+for (const b of document.querySelectorAll("button[data-close]")) b.onclick = () => b.closest("dialog").close("cancel");
