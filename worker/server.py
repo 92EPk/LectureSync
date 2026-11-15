@@ -2337,7 +2337,8 @@ MS_SCOPES_FULL = "offline_access User.Read Files.ReadWrite.All Sites.Read.All"
 MS_SCOPES_LIGHT = "offline_access User.Read Files.ReadWrite"
 MS_SCOPES = MS_SCOPES_FULL
 GRAPH = "https://graph.microsoft.com/v1.0"
-MS_CHUNK = 320 * 1024 * 32       # 10 MiB; upload sessions need multiples of 320 KiB
+MS_CHUNK = 320 * 1024 * 100      # ~31 MiB; upload sessions need multiples of 320 KiB
+MS_PARALLEL = 3                  # files uploaded at the same time
 MS_SMALL = 4 * MIB               # below this a single PUT is enough
 MS: dict = {"access": "", "refresh": "", "exp": 0.0, "user": "", "flow": None, "roots": None, "labels": {}}
 
@@ -2397,7 +2398,7 @@ def _g(method: str, path: str, body=None, data: bytes | None = None, headers: di
        signed: bool = True) -> dict:
     """One Graph call with retries on throttling / transient errors."""
     url = path if path.startswith("http") else GRAPH + path
-    for attempt in range(5):
+    for attempt in range(8):
         h = {"Authorization": f"Bearer {_ms_token()}"} if signed else {}
         h.update(headers or {})
         payload = data
@@ -2410,8 +2411,9 @@ def _g(method: str, path: str, body=None, data: bytes | None = None, headers: di
                 raw = r.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503, 504) and attempt < 4:
-                time.sleep(int(e.headers.get("Retry-After") or 0) or 2 ** attempt)
+            if e.code in (429, 500, 502, 503, 504) and attempt < 7:
+                # SharePoint throttles bursts: honour Retry-After, otherwise back off up to a minute.
+                time.sleep(min(120, int(e.headers.get("Retry-After") or 0) or min(60, 2 ** (attempt + 1))))
                 continue
             if e.code == 401 and signed and attempt == 0:
                 MS["exp"] = 0  # token revoked or expired early: refresh once
@@ -2425,10 +2427,10 @@ def _g(method: str, path: str, body=None, data: bytes | None = None, headers: di
             elif e.code == 403:
                 msg = "forbidden — your Microsoft account has no access here"
             raise MsError(e.code, f"Microsoft: {msg or 'HTTP ' + str(e.code)}")
-        except urllib.error.URLError:
-            if attempt == 4:
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 7:
                 raise
-            time.sleep(2 ** attempt)
+            time.sleep(min(60, 2 ** (attempt + 1)))
     raise MsError(503, "Microsoft is not answering, try again")
 
 
@@ -2686,16 +2688,28 @@ async def _ms_fetch(job: Job, path: str, into: Path) -> Path:
     return await _ms_fetch_item(job, d, item, into)
 
 
+def _ms_same_size(d: str, rel: str, size: int) -> bool:
+    """True when the destination already holds a complete file of exactly this size."""
+    try:
+        it = _g("GET", _ms_item(d, rel) + "?$select=size,file")
+    except MsError:
+        return False
+    return "file" in it and int(it.get("size") or -1) == size
+
+
 def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -> None:
     rel = f"{rel_parent}/{f.name}" if rel_parent else f.name
     size = f.stat().st_size
+    if _ms_same_size(d, rel, size):
+        prog(size)  # already uploaded in an earlier (interrupted) run: skip it
+        return
     if size <= MS_SMALL:
-        _g("PUT", _ms_item(d, rel) + "/content?@microsoft.graph.conflictBehavior=rename",
+        _g("PUT", _ms_item(d, rel) + "/content?@microsoft.graph.conflictBehavior=replace",
            data=f.read_bytes(), headers={"Content-Type": "application/octet-stream"})
         prog(size)
         return
     sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
-              body={"item": {"@microsoft.graph.conflictBehavior": "rename"}})
+              body={"item": {"@microsoft.graph.conflictBehavior": "replace"}})
     up, pos, sent, fails = sess["uploadUrl"], 0, 0, 0
     with open(f, "rb") as fh:
         while pos < size:
@@ -2711,7 +2725,7 @@ def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -
                 if e.code in (404, 410):
                     # Upload sessions expire (~15 min idle / lifetime): open a fresh one and resume.
                     sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
-                              body={"item": {"@microsoft.graph.conflictBehavior": "rename"}})
+                              body={"item": {"@microsoft.graph.conflictBehavior": "replace"}})
                     up = sess["uploadUrl"]
                     nxt = sess.get("nextExpectedRanges") or []
                     pos = int(nxt[0].split("-")[0]) if nxt else 0
@@ -2720,14 +2734,14 @@ def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -
                         raise
                     continue
                 fails += 1
-                if fails > 5:
+                if fails > 10:
                     raise
-                time.sleep(2 * fails)
-            except (urllib.error.URLError, TimeoutError):
+                time.sleep(min(60, 3 * fails))
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
                 fails += 1
-                if fails > 5:
+                if fails > 10:
                     raise
-                time.sleep(2 * fails)
+                time.sleep(min(60, 3 * fails))
                 # Ask the session where it stopped and carry on from there.
                 nxt = (_g("GET", up, signed=False).get("nextExpectedRanges") or ["0-"])[0]
                 pos = int(nxt.split("-")[0])
@@ -2755,14 +2769,26 @@ async def _ms_push(job: Job, entries: list[Path]) -> None:
         sent += n
         job.progress = sent / max(total, 1)
         job.speed = sent / max(time.time() - t0, 0.1)
-    for i, (f, sub) in enumerate(files, 1):
-        await _wait_if_paused(job, "uploading")
-        job.state = "uploading to Microsoft" + (f" {i}/{len(files)}" if len(files) > 1 else "")
+    sem, done = asyncio.Semaphore(MS_PARALLEL), [0]
+
+    async def one(f: Path, sub: str) -> None:
+        async with sem:
+            await _wait_if_paused(job, "uploading")
+            parent = "/".join(x for x in (base, sub) if x)
+            if sub and parent not in made:
+                made.add(parent)
+                await asyncio.to_thread(_ms_mkdirs, d, parent)
+            await asyncio.to_thread(_ms_upload_file, job, f, d, parent, prog, gate_ok)
+            done[0] += 1
+            job.state = "uploading to Microsoft" + (f" {done[0]}/{len(files)}" if len(files) > 1 else "")
+    # Make every folder first (in order) so parallel uploads never race on creating the same one.
+    for _, sub in files:
         parent = "/".join(x for x in (base, sub) if x)
         if sub and parent not in made:
             await asyncio.to_thread(_ms_mkdirs, d, parent)
             made.add(parent)
-        await asyncio.to_thread(_ms_upload_file, job, f, d, parent, prog, gate_ok)
+    job.state = "uploading to Microsoft" + (f" 0/{len(files)}" if len(files) > 1 else "")
+    await asyncio.gather(*(one(f, sub) for f, sub in files))
 
 
 def _ms_staging(job: Job) -> Path:
@@ -2993,6 +3019,106 @@ async def create_copy(body: CopyIn):
     return _public(job)
 
 
+# ---- rclone fast path (Drive -> OneDrive/SharePoint)
+# rclone does the cloud upload itself: parallel transfers, size check + skip of finished files,
+# resumable chunked uploads and patient handling of Microsoft throttling. The Microsoft token we
+# already hold is written into a private rclone config, so no extra sign-in is needed.
+RCLONE_CONF = SCRATCH / "rclone" / "rclone.conf"
+_RCLONE_BIN: list = []
+
+
+async def _rclone_bin() -> str | None:
+    if _RCLONE_BIN:
+        return _RCLONE_BIN[0]
+    exe = shutil.which("rclone")
+    if not exe:
+        def install() -> None:
+            subprocess.run("curl -fsSL https://rclone.org/install.sh | bash > /dev/null 2>&1",
+                           shell=True, timeout=300)
+        try:
+            await asyncio.to_thread(install)
+        except Exception:
+            pass
+        exe = shutil.which("rclone")
+    _RCLONE_BIN.append(exe)
+    return exe
+
+
+def _rclone_conf(d: str) -> None:
+    _ms_token()  # refresh first so rclone starts with a fresh hour
+    dtype = (_g("GET", f"/drives/{d}?$select=driveType").get("driveType") or "business")
+    tok = {"access_token": MS["access"], "token_type": "Bearer", "refresh_token": MS["refresh"],
+           "expiry": datetime.utcfromtimestamp(MS["exp"]).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    RCLONE_CONF.parent.mkdir(parents=True, exist_ok=True)
+    RCLONE_CONF.write_text("\n".join([
+        "[ms]", "type = onedrive", f"client_id = {MS_CLIENT_ID}", f"token = {json.dumps(tok)}",
+        f"drive_id = {d}", f"drive_type = {dtype}",
+        f"auth_url = {MS_AUTH}/authorize", f"token_url = {MS_AUTH}/token", ""]))
+    os.chmod(RCLONE_CONF, 0o600)
+
+
+async def _rclone_push(job: Job, local: Path) -> bool:
+    """Copy a Drive file/folder to Microsoft with rclone. False = not usable here, caller falls back."""
+    d, base = _ms_split(job.dest)
+    if "~" in d:
+        return False  # shortcut-anchored folders are only reachable through the item API
+    exe = await _rclone_bin()
+    if not exe:
+        return False
+    await asyncio.to_thread(_rclone_conf, d)
+    dst = "/".join(x for x in (base, local.name if local.is_dir() else "") if x)
+    cmd = [exe, "copy", str(local) if local.is_dir() else str(local.parent), f"ms:{dst}",
+           "--config", str(RCLONE_CONF), "--transfers", "4", "--checkers", "8",
+           "--onedrive-chunk-size", "30Mi", "--buffer-size", "32Mi",
+           "--retries", "10", "--low-level-retries", "20", "--retries-sleep", "10s",
+           "--tpslimit", "8", "--use-json-log", "--stats", "2s", "--stats-log-level", "NOTICE",
+           "--log-level", "NOTICE", "--exclude", "*.{gdoc,gsheet,gslides,gform,gdraw,gmap,gsite,gjam}"]
+    if not local.is_dir():
+        cmd += ["--include", "/" + local.name.replace("[", "\\[").replace("*", "\\*")]
+    job.state, job.progress, job.speed = "uploading to Microsoft (rclone)", 0.0, 0.0
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL,
+                                                stderr=asyncio.subprocess.PIPE)
+    gate, last, stopped = GATES[job.id], "", False
+    try:
+        while True:
+            try:
+                line = await asyncio.wait_for(proc.stderr.readline(), 1.0)
+            except asyncio.TimeoutError:
+                line = None
+            if job.state == "cancelled":
+                proc.kill()
+                raise RuntimeError("cancelled")
+            if not gate.is_set() and not stopped:      # pause = freeze rclone
+                proc.send_signal(19); stopped = True; job.state, job.speed = "paused", 0.0
+            elif gate.is_set() and stopped:
+                proc.send_signal(18); stopped = False; job.state = "uploading to Microsoft (rclone)"
+            if line is None:
+                continue
+            if not line:
+                break
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            st = ev.get("stats")
+            if st:
+                tot = st.get("totalBytes") or 0
+                job.progress = min(1.0, st.get("bytes", 0) / tot) if tot else job.progress
+                job.speed = float(st.get("speed") or 0)
+                n, tn = st.get("transfers", 0), st.get("totalTransfers", 0)
+                if tn > 1 and not stopped:
+                    job.state = f"uploading to Microsoft (rclone) {n}/{tn}"
+            elif ev.get("level") in ("error", "critical"):
+                last = str(ev.get("msg") or "")[:300]
+        rc = await proc.wait()
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+    if rc != 0:
+        raise RuntimeError(f"rclone failed: {last or 'exit ' + str(rc)} — press Retry, finished files are skipped")
+    return True
+
+
 async def _run_copy(job: Job) -> None:
     await _wait_if_paused(job, "queued")
     work = SCRATCH / job.id
@@ -3008,7 +3134,16 @@ async def _run_copy(job: Job) -> None:
         if job.compress:
             await _copy_compressed(job, local, work)
         elif is_ms(job.dest) and not is_ms(job.src):
-            await _ms_push(job, [local])          # straight from the mounted Drive, no extra copy
+            try:
+                ok = await _rclone_push(job, local)
+            except RuntimeError as e:
+                if "cancelled" in str(e):
+                    raise
+                ok = False
+                job.error = ""
+                print("rclone path failed, falling back:", e)
+            if not ok:
+                await _ms_push(job, [local])      # built-in uploader (also skips finished files)
         else:
             job.state, job.progress, job.speed = "copying", 0.0, 0.0
             await asyncio.to_thread(move_with_progress, job, local, unique(_dest_dir(job) / local.name))
