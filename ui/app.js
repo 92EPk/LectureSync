@@ -1192,7 +1192,7 @@ const getHistory = () => { try { return JSON.parse(localStorage.getItem("ls-hist
 function addHistory(j) {
   const h = getHistory();
   if (h.some((x) => x.id === j.id)) return;
-  h.unshift({ id: j.id, name: j.rename || j.name || "file", size: j.size, dest: j.dest, at: Date.now() });
+  h.unshift({ id: j.id, name: j.rename || j.name || "file", size: j.size, dest: j.dest, at: Date.now(), duration: j.duration || 0 });
   localStorage.setItem("ls-history", JSON.stringify(h.slice(0, 300)));
 }
 
@@ -1240,6 +1240,7 @@ async function loadJobs() {
     const eta = FINISHED.includes(state) || state === "paused" ? "" : jobEta(j, state);
     const label = (j.state === "failed" && j.error) || (/^retrying/.test(state) && j.error) || STATE_LABEL[state] ||
       state.replace(/^downloading (\d+\/\d+)/, "Downloading · item $1").replace(/^sending part/, "Sending to Telegram · part").replace(/^sending file/, "Sending to Telegram · file");
+    const doneInfo = j.state === "done" && j.duration > 0 ? doneSummary(j) : "";
     const opts = [
       j.extra_ids && j.extra_ids.length ? `${j.extra_ids.length + 1} parts` : "",
       j.kind === "upload" && j.parts > 1 ? `${j.parts} parts` : "",
@@ -1278,7 +1279,7 @@ async function loadJobs() {
         el("span", { className: "job-name", textContent: title, title }),
         el("span", { className: "meta", textContent: "#" + j.id })),
       el("div", { className: "job-state", textContent: (j.kind === "upload" ? "→ Telegram: " + j.dest : "→ /" + (j.dest || "My Drive")) + (opts ? ` · ${opts}` : "") }),
-      el("div", { className: "job-state", textContent: label + (j.state === "failed" ? "" : pct + speed + eta) }),
+      el("div", { className: "job-state", textContent: label + doneInfo + (j.state === "failed" ? "" : pct + speed + eta) }),
       el("div", { className: "bar" }, fill),
       actions.length ? el("div", { className: "job-actions" }, ...actions) : "");
   }));
@@ -1297,6 +1298,18 @@ function jobEta(j, state) {
   return secs > 0 && isFinite(secs) ? ` · ~${fmtEta(secs)} left` : "";
 }
 
+// "Finished in 2m 15s · avg 18.5 MB/s"
+function fmtDuration(s) {
+  if (!s || s <= 0) return "";
+  if (s < 60) return `${Math.max(1, Math.round(s))}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")}m`;
+}
+function doneSummary(j) {
+  const avg = j.size && j.duration >= 1 ? ` · avg ${fmtSize(j.size / j.duration)}/s` : "";
+  return ` in ${fmtDuration(j.duration)}${avg}`;
+}
+
 function renderHistory() {
   const h = getHistory();
   $("historyEmpty").classList.toggle("hidden", h.length > 0);
@@ -1304,7 +1317,7 @@ function renderHistory() {
     icon(fileIcon(x.name)),
     el("div", { className: "info" },
       el("span", { className: "name", textContent: x.name, title: x.name }),
-      el("span", { className: "sub", textContent: `→ /${x.dest || "My Drive"} · ${new Date(x.at).toLocaleString()}` })),
+      el("span", { className: "sub", textContent: `→ /${x.dest || "My Drive"} · ${new Date(x.at).toLocaleString()}` + (x.duration ? ` · took ${fmtDuration(x.duration)}` : "") })),
     el("span", { className: "meta", textContent: fmtSize(x.size) }))));
 }
 

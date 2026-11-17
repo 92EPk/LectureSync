@@ -489,6 +489,8 @@ class Job:
     paused: bool = False
     error: str | None = None
     created: float = field(default_factory=time.time)
+    started: float = 0.0          # when the transfer actually began (not counting time in line)
+    duration: float = 0.0         # seconds from start to done
 
 
 JOBS: dict[str, Job] = {}
@@ -946,10 +948,14 @@ async def _worker() -> None:
             runner = _with_ms_push(runner)
         attempt = 0
         while True:
+            if not job.started:
+                job.started = time.time()
             task = asyncio.create_task(runner(job))
             TASKS[job.id] = task
             try:
                 await task
+                if job.state == "done":
+                    job.duration = round(time.time() - job.started, 1)
                 break
             except asyncio.CancelledError:
                 job.state, job.speed = "cancelled", 0.0
@@ -2415,7 +2421,16 @@ def _g(method: str, path: str, body=None, data: bytes | None = None, headers: di
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < 7:
                 # SharePoint throttles bursts: honour Retry-After, otherwise back off up to a minute.
-                time.sleep(min(120, int(e.headers.get("Retry-After") or 0) or min(60, 2 ** (attempt + 1))))
+                wait = min(120, int(e.headers.get("Retry-After") or 0) or min(60, 2 ** (attempt + 1)))
+                j = getattr(_MS_TL, "job", None)
+                if j is not None and e.code == 429:
+                    prev = j.state
+                    j.state = f"throttled by Microsoft · waiting {wait}s"
+                    time.sleep(wait)
+                    if j.state.startswith("throttled"):
+                        j.state = prev
+                else:
+                    time.sleep(wait)
                 continue
             if e.code == 401 and signed and attempt == 0:
                 MS["exp"] = 0  # token revoked or expired early: refresh once
@@ -2690,6 +2705,10 @@ async def _ms_fetch(job: Job, path: str, into: Path) -> Path:
     return await _ms_fetch_item(job, d, item, into)
 
 
+_MS_TL = threading.local()  # lets _g report throttling on the job running in this thread
+_MS_BAD = str.maketrans({c: "-" for c in ':*?"<>|'})
+
+
 def _ms_same_size(d: str, rel: str, size: int) -> bool:
     """True when the destination already holds a complete file of exactly this size."""
     try:
@@ -2700,7 +2719,9 @@ def _ms_same_size(d: str, rel: str, size: int) -> bool:
 
 
 def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -> None:
-    rel = f"{rel_parent}/{f.name}" if rel_parent else f.name
+    _MS_TL.job = job
+    name = f.name.translate(_MS_BAD).strip(" .") or "file"  # OneDrive/SharePoint forbid these characters
+    rel = f"{rel_parent}/{name}" if rel_parent else name
     size = f.stat().st_size
     if _ms_same_size(d, rel, size):
         prog(size)  # already uploaded in an earlier (interrupted) run: skip it
@@ -2724,6 +2745,9 @@ def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -
                    headers={"Content-Range": f"bytes {pos}-{end}/{size}", "Content-Length": str(len(chunk))})
                 pos, fails = end + 1, 0
             except MsError as e:
+                if end + 1 >= size and _ms_same_size(d, rel, size):
+                    pos = size  # last chunk landed; session closed during Microsoft's commit step
+                    break
                 if e.code in (404, 410):
                     # Upload sessions expire (~15 min idle / lifetime): open a fresh one and resume.
                     sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
@@ -2744,11 +2768,24 @@ def _ms_upload_file(job: Job, f: Path, d: str, rel_parent: str, prog, gate_ok) -
                 if fails > 10:
                     raise
                 time.sleep(min(60, 3 * fails))
+                if end + 1 >= size and _ms_same_size(d, rel, size):
+                    pos = size  # commit finished while our socket timed out
+                    break
                 # Ask the session where it stopped and carry on from there.
-                nxt = (_g("GET", up, signed=False).get("nextExpectedRanges") or ["0-"])[0]
-                pos = int(nxt.split("-")[0])
+                try:
+                    nxt = (_g("GET", up, signed=False).get("nextExpectedRanges") or ["0-"])[0]
+                    pos = int(nxt.split("-")[0])
+                except MsError:
+                    if _ms_same_size(d, rel, size):
+                        pos = size
+                        break
+                    sess = _g("POST", _ms_item(d, rel) + "/createUploadSession",
+                              body={"item": {"@microsoft.graph.conflictBehavior": "replace"}})
+                    up, pos = sess["uploadUrl"], 0
             prog(pos - sent)
             sent = pos
+    if pos > sent:
+        prog(pos - sent)
 
 
 async def _ms_push(job: Job, entries: list[Path]) -> None:
